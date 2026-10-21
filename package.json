@@ -1,0 +1,39 @@
+{
+  "name": "hark-cockpit",
+  "version": "1.1.0",
+  "description": "多账号 Hark 聊天窗口管理器",
+  "main": "bootstrap.js",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.local.harkcockpit",
+    "productName": "Hark Cockpit",
+    "files": [
+      "bootstrap.js",
+      "app/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "HarkCockpit-Setup-${version}.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "author": "Hark Cockpit"
+}
