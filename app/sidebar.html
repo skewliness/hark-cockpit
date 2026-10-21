@@ -1,76 +1,129 @@
 <!doctype html><html lang="zh"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
 <style>
-  body{margin:0;font:14px -apple-system,"Microsoft YaHei",sans-serif;background:#16181d;color:#e6e6e6;height:100vh;display:flex;flex-direction:column;user-select:none}
-  h1{font-size:15px;margin:16px 14px 10px;letter-spacing:.5px}
-  #list{flex:1;overflow:auto;padding:0 8px}
-  .acc{display:flex;align-items:center;gap:8px;padding:10px;border-radius:8px;cursor:pointer;margin-bottom:4px}
-  .acc:hover{background:#22252c}.acc.on{background:#2f6fed}
-  .dot{width:28px;height:28px;border-radius:50%;background:#3a3f4b;display:flex;align-items:center;justify-content:center;font-weight:600;flex:none}
-  .acc.on .dot{background:#fff;color:#2f6fed}
-  .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .k{display:none;font-size:11px;opacity:.6}.acc:hover .k{display:inline}
-  #add{margin:10px;padding:10px;border:1px dashed #555;border-radius:8px;background:none;color:#ccc;cursor:pointer}
-  #add:hover{border-color:#2f6fed;color:#fff}
-  #menu{position:fixed;display:none;background:#262a32;border-radius:8px;padding:4px;box-shadow:0 6px 20px #0008}
-  #menu div{padding:8px 14px;cursor:pointer;border-radius:6px}#menu div:hover{background:#2f6fed}
-  #dlg{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center}
-  #dlg .box{background:#262a32;padding:16px;border-radius:10px;width:180px}
-  #dlg .t{margin-bottom:10px;font-size:13px}
-  #dlg input{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #444;background:#16181d;color:#fff;outline:none}
-  #dlg .b{display:flex;gap:6px;margin-top:10px}#dlg button{flex:1;padding:7px;border:0;border-radius:6px;cursor:pointer;background:#3a3f4b;color:#fff}
-  #dlg button.ok{background:#2f6fed}
-  #upd{margin:0 10px;padding:9px;border-radius:8px;background:#1f8a4c;color:#fff;text-align:center;cursor:pointer;display:none;font-size:13px}
-  #ver{font-size:11px;opacity:.45;text-align:center;margin-bottom:8px;cursor:pointer}
-  #toast{position:fixed;left:10px;right:10px;bottom:90px;background:#2f6fed;color:#fff;padding:10px;border-radius:8px;font-size:12px;display:none;line-height:1.5}
-  #hint{font-size:11px;opacity:.5;margin:0 14px 8px;line-height:1.5}
+:root{--frost:rgba(255,255,255,.7);--ink:#1D1D1F;--slate:#6E6E73;--faint:#A1A1A6;--line:rgba(0,0,0,.08);--blue:#007AFF;--blue-soft:#E5F0FF;--lagoon:#0891B2;--green:#28A745;--red:#FF3B30}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;font:13px/1.45 -apple-system,"SF Pro Text","Segoe UI Variable Text","Segoe UI","PingFang SC","Microsoft YaHei UI",system-ui,sans-serif;color:var(--ink);user-select:none;
+  background:linear-gradient(180deg,rgba(236,240,246,.97) 0%,rgba(228,234,242,.97) 100%);display:flex;flex-direction:column;border-right:1px solid var(--line)}
+.drag{height:52px;flex:none;-webkit-app-region:drag;display:flex;align-items:center;padding:0 18px}
+.lights{display:flex;gap:8px;-webkit-app-region:no-drag}
+.lights button{width:12px;height:12px;border-radius:50%;border:0;padding:0;display:grid;place-items:center;cursor:default;box-shadow:inset 0 0 0 .5px rgba(0,0,0,.18)}
+.lights svg{opacity:0}.lights:hover svg{opacity:.75}
+#lc{background:#FF5F57}#lm{background:#FEBC2E}#lx{background:#28C840}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.brand{display:flex;align-items:center;gap:12px;padding:2px 18px 16px}
+.logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(140deg,var(--blue),var(--lagoon));display:grid;place-items:center;box-shadow:0 6px 16px rgba(37,99,235,.28),inset 0 1px 0 rgba(255,255,255,.35);flex:none}
+.brand b{display:block;font-size:15px;letter-spacing:.2px}
+.brand span{font-size:12px;color:var(--slate)}
+.nav{margin:0 10px 4px;display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:7px;cursor:pointer;color:var(--slate);border:0;background:none;width:calc(100% - 24px);text-align:left}
+.nav:hover{background:rgba(0,0,0,.05);color:var(--ink)}
+.nav.on{background:var(--blue);color:#fff}
+.sec{display:flex;justify-content:space-between;align-items:center;margin:16px 20px 6px;font-size:11px;font-weight:600;color:var(--faint)}
+.sec em{font-style:normal;font-weight:500;color:var(--faint)}
+#list{flex:1;overflow:auto;padding:0 10px 8px}
+.acc{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;cursor:pointer;margin-bottom:2px;background:transparent;border:0;width:100%;text-align:left}
+.acc:hover{background:rgba(0,0,0,.05)}
+.acc.on{background:var(--blue);color:#fff}
+.acc.on .st,.acc.on .st.ok{color:rgba(255,255,255,.85)}.acc.on .st i{background:#fff}
+.acc.on kbd{background:rgba(255,255,255,.18);border-color:transparent;color:#fff}
+.acc.on .av{box-shadow:0 0 0 1.5px rgba(255,255,255,.9)}
+.av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:600;font-size:14px;flex:none}
+.meta{flex:1;min-width:0}
+.meta b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{font-size:11.5px;color:var(--faint);display:flex;align-items:center;gap:5px}
+.st i{width:6px;height:6px;border-radius:50%;background:#CBD5E1}
+.st.ok{color:var(--green)}.st.ok i{background:var(--green)}
+kbd{font:11px "Segoe UI",system-ui;color:var(--faint);border:1px solid var(--line);border-radius:5px;padding:0 5px;background:#fff;opacity:0;transition:opacity .15s}
+.acc:hover kbd,.acc.on kbd{opacity:1}
+.foot{padding:12px;border-top:1px solid var(--line)}
+.primary{width:100%;border:0;border-radius:8px;padding:8px;background:linear-gradient(180deg,#2F8BFF,#007AFF);color:#fff;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 .5px 0 rgba(255,255,255,.35)}
+.primary:hover{filter:brightness(1.05)}
+.tools{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding:0 2px}
+.ib{border:1px solid var(--line);background:#fff;border-radius:8px;width:30px;height:30px;display:grid;place-items:center;cursor:pointer;color:var(--slate)}
+.ib:hover{color:var(--blue);border-color:#C7D4F5}
+#ver{font-size:11.5px;color:var(--faint);cursor:pointer;border:0;background:none}
+#upd,#toast{margin:0 12px 10px;padding:9px 12px;border-radius:10px;font-size:12px;display:none}
+#upd{background:rgba(255,255,255,.92);color:var(--ink);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.12);border-radius:12px;cursor:pointer}
+#upd::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:7px;vertical-align:1px}
+#toast{background:rgba(255,255,255,.92);color:var(--ink);border:1px solid var(--line);box-shadow:0 8px 24px rgba(0,0,0,.12);border-radius:12px}
+#menu{position:fixed;display:none;background:rgba(246,246,248,.96);border:1px solid rgba(0,0,0,.1);border-radius:8px;padding:5px;box-shadow:0 10px 30px rgba(0,0,0,.18);min-width:150px;backdrop-filter:blur(20px)}
+#menu div{padding:4px 10px;cursor:default;border-radius:5px}#menu div:hover{background:var(--blue);color:#fff}
+#menu hr{border:0;border-top:1px solid rgba(0,0,0,.1);margin:4px 6px}#menu div.danger:hover{background:var(--red);color:#fff}
+#dlg{position:fixed;inset:0;background:rgba(26,34,51,.25);display:none;align-items:center;justify-content:center;backdrop-filter:blur(2px)}
+#dlg .box{background:rgba(246,246,248,.98);padding:18px 16px 14px;border-radius:12px;width:236px;box-shadow:0 0 0 .5px rgba(0,0,0,.15),0 20px 50px rgba(0,0,0,.25);text-align:center}
+#dlg .box .logo{margin:0 auto 10px;width:44px;height:44px}
+#dlg .t{margin-bottom:10px;font-weight:600}
+#dlg input{width:100%;padding:6px 8px;border-radius:6px;text-align:left;border:1px solid var(--line);outline:none;font:inherit}
+#dlg input:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-soft)}
+#dlg .b{display:flex;gap:8px;margin-top:12px}
+#dlg button{flex:1;padding:5px;border-radius:6px;cursor:pointer;border:0;background:#fff;box-shadow:0 0 0 .5px rgba(0,0,0,.15),0 1px 1px rgba(0,0,0,.06)}
+#dlg button.ok{background:linear-gradient(180deg,#2F8BFF,#007AFF);color:#fff;font-weight:600}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(0,0,0,.18);border-radius:10px;border:3px solid transparent;background-clip:content-box}::-webkit-scrollbar-thumb:hover{background-color:rgba(0,0,0,.32)}
 </style></head><body>
-<h1>Hark Cockpit</h1>
+<div class="drag"><div class="lights"><button id="lc" title="关闭"><svg width="8" height="8" viewBox="0 0 10 10" stroke="#4d0000" stroke-width="1.4"><path d="M2 2l6 6M8 2l-6 6"/></svg></button><button id="lm" title="最小化"><svg width="8" height="8" viewBox="0 0 10 10" stroke="#5a3a00" stroke-width="1.4"><path d="M1.5 5h7"/></svg></button><button id="lx" title="最大化"><svg width="8" height="8" viewBox="0 0 10 10" fill="#0a4d00"><path d="M2 2h4L2 6zM8 8H4l4-4z"/></svg></button></div></div>
+<div class="brand">
+  <div class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M4 19c3.5-7 8-11.5 16-14-3 4-4.4 8.3-3.8 14.2C12.4 16.6 8.4 16.7 4 19z"/></svg></div>
+  <div><b>Hark Cockpit</b><span>多账号工作台</span></div>
+</div>
+<button class="nav" id="homeBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>总览</button>
+<div class="sec">账号 <em id="cnt">0</em></div>
 <div id="list"></div>
-<div id="hint">在 Chrome 里登录 Hark 后，点 Hark Cockpit 插件即可导入登录</div>
 <div id="toast"></div>
 <div id="upd"></div>
-<button id="add">＋ 添加 Hark 账号</button>
-<div id="ver" title="点击检查更新"></div>
-<div id="dlg"><div class="box"><div class="t" id="dt"></div><input id="di"><div class="b"><button id="dc">取消</button><button class="ok" id="do">确定</button></div></div></div>
-<div id="menu"><div data-a="rename">重命名</div><div data-a="reload">刷新</div><div data-a="remove">删除（清除登录）</div></div>
+<div class="foot">
+  <button class="primary" id="add"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>添加账号</button>
+  <div class="tools">
+    <button id="ver" title="检查更新"></button>
+    <button class="ib" id="chk" title="检查更新"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></button>
+  </div>
+</div>
+<div id="dlg"><div class="box"><div class="logo"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M4 19c3.5-7 8-11.5 16-14-3 4-4.4 8.3-3.8 14.2C12.4 16.6 8.4 16.7 4 19z"/></svg></div><div class="t" id="dt"></div><input id="di"><div class="b"><button id="dc">取消</button><button class="ok" id="do">确定</button></div></div></div>
+<div id="menu"><div data-a="rename">重命名</div><div data-a="reload">刷新页面</div><hr><div data-a="remove" class="danger">删除并清除登录</div></div>
 <script>
-function ask(title,def,cb,withInput=true){const d=dlg,i=di;dt.textContent=title;i.style.display=withInput?'':'none';i.value=def||'';d.style.display='flex';if(withInput){i.focus();i.select();}
- const done=v=>{d.style.display='none';dob.onclick=dc.onclick=i.onkeydown=null;if(v!==null)cb(v)};
- const dob=document.getElementById('do');dob.onclick=()=>done(withInput?(i.value.trim()||def):true);dc.onclick=()=>done(null);
- i.onkeydown=e=>{if(e.key==='Enter')dob.click();if(e.key==='Escape')dc.click()};}
-let st={accounts:[],activeId:null}, ctxId=null;
-const list=document.getElementById('list'), menu=document.getElementById('menu');
+const TINTS=[['#E8EFFE','#2563EB'],['#E0F5F8','#0E7490'],['#EDE9FE','#6D28D9'],['#FCE7F3','#BE185D'],['#FEF3C7','#B45309'],['#DCFCE7','#15803D']];
+const tint=s=>{let h=0;for(const c of s||'')h=(h*31+c.charCodeAt(0))>>>0;return TINTS[h%TINTS.length]};
+function ask(title,def,cb,withInput=true){const i=di;dt.textContent=title;i.style.display=withInput?'':'none';i.value=def||'';dlg.style.display='flex';if(withInput){i.focus();i.select();}
+ const ok=document.getElementById('do');const done=v=>{dlg.style.display='none';ok.onclick=dc.onclick=i.onkeydown=null;if(v!==null)cb(v)};
+ ok.textContent=withInput?'确定':'删除';ok.onclick=()=>done(withInput?(i.value.trim()||def):true);dc.onclick=()=>done(null);
+ i.onkeydown=e=>{if(e.key==='Enter')ok.click();if(e.key==='Escape')dc.click()};if(!withInput)ok.focus();}
+let st={accounts:[],activeId:null,showHome:false}, ctxId=null;
 function render(){
-  list.innerHTML='';
+  list.innerHTML='';cnt.textContent=st.accounts.length;
+  homeBtn.classList.toggle('on',!!st.showHome);
   st.accounts.forEach((a,i)=>{
-    const el=document.createElement('div'); el.className='acc'+(a.id===st.activeId?' on':'');
-    el.innerHTML=`<div class="dot">${(a.name||'H')[0].toUpperCase()}</div><div class="name"></div><span class="k">${i<9?'Ctrl+'+(i+1):''}</span>`;
-    el.querySelector('.name').textContent=a.name;
+    const [bg,fg]=tint(a.name);
+    const el=document.createElement('button');el.className='acc'+(!st.showHome&&a.id===st.activeId?' on':'');
+    el.innerHTML=`<div class="av" style="background:${bg};color:${fg}"></div><div class="meta"><b></b><div class="st ${a.loggedIn?'ok':''}"><i></i>${a.loggedIn?'已登录':'未登录'}</div></div>${i<9?`<kbd>Ctrl ${i+1}</kbd>`:''}`;
+    el.querySelector('.av').textContent=(a.name||'H').trim()[0].toUpperCase();
+    el.querySelector('b').textContent=a.name;
     el.onclick=()=>cockpit.switchTo(a.id);
-    el.oncontextmenu=e=>{e.preventDefault();ctxId=a.id;menu.style.left=e.clientX+'px';menu.style.top=e.clientY+'px';menu.style.display='block'};
+    el.oncontextmenu=e=>{e.preventDefault();ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-160)+'px';menu.style.top=Math.min(e.clientY,innerHeight-120)+'px';menu.style.display='block'};
     list.appendChild(el);
   });
 }
 document.onclick=()=>menu.style.display='none';
-menu.onclick=async e=>{e.stopPropagation();menu.style.display='none';
-  const act=e.target.dataset.a; if(!act||!ctxId) return;
-  const id=ctxId; if(act==='rename'){const a=st.accounts.find(x=>x.id===id);ask('新名称：',a&&a.name,n=>cockpit.rename(id,n));}
-  if(act==='reload') cockpit.reload(ctxId);
-  if(act==='remove') ask('删除该账号并清除它的登录状态？','',()=>cockpit.remove(id),false);
-};
-document.getElementById('add').onclick=()=>{
-  ask('给这个账号起个名字：','Hark '+(st.accounts.length+1),name=>cockpit.add({name}));
-};
-document.addEventListener('keydown',e=>{const n=+e.key; if((e.ctrlKey||e.metaKey)&&n>=1&&n<=9&&st.accounts[n-1]) cockpit.switchTo(st.accounts[n-1].id);});
+menu.onclick=e=>{e.stopPropagation();menu.style.display='none';const act=e.target.dataset.a,id=ctxId;if(!act||!id)return;
+  const a=st.accounts.find(x=>x.id===id);
+  if(act==='rename')ask('重命名账号',a&&a.name,n=>cockpit.rename(id,n));
+  if(act==='reload')cockpit.reload(id);
+  if(act==='remove')ask(`删除「${a?a.name:''}」并清除它的登录？`,'',()=>cockpit.remove(id),false);};
+add.onclick=()=>ask('给新账号起个名字','Hark '+(st.accounts.length+1),name=>cockpit.add({name}));
+homeBtn.onclick=()=>cockpit.home();
+lc.onclick=()=>cockpit.win('close');lm.onclick=()=>cockpit.win('min');lx.onclick=()=>cockpit.win('max');
+document.addEventListener('keydown',e=>{const n=+e.key;if((e.ctrlKey||e.metaKey)&&n>=1&&n<=9&&st.accounts[n-1])cockpit.switchTo(st.accounts[n-1].id);});
 cockpit.onState(s=>{st=s;render()});
-let tt;cockpit.onToast(m=>{toast.textContent=m;toast.style.display='block';clearTimeout(tt);tt=setTimeout(()=>toast.style.display='none',4000);});
-cockpit.version().then(v=>ver.textContent='v'+v);
-ver.onclick=async()=>{ver.textContent='检查更新中…';const r=await cockpit.checkUpdate();const v=await cockpit.version();ver.textContent=r==='latest'?'已是最新 v'+v:(r==='offline'?'无法连接更新服务器':'v'+v);setTimeout(()=>ver.textContent='v'+v,2500);};
-cockpit.onUpdate(u=>{
-  if(u.state==='downloading'){upd.style.display='block';upd.style.cursor='default';upd.textContent='正在下载新版本'+(u.percent!=null?' '+u.percent+'%':'…');upd.onclick=null;}
-  if(u.state==='ready'){upd.style.display='block';upd.style.cursor='pointer';upd.textContent='新版本 v'+u.version+' 已就绪，点击重启更新';upd.onclick=()=>cockpit.installUpdate();}
-  if(u.state==='error'){upd.style.display='none';}
-});
 cockpit.getState().then(s=>{st=s;render()});
+const showVer=()=>cockpit.version().then(v=>ver.textContent='v'+v);showVer();
+const check=async()=>{ver.textContent='检查中…';const r=await cockpit.checkUpdate();const v=await cockpit.version();
+  ver.textContent=r==='latest'?'已是最新':(r==='offline'?'连不上更新服务器':(r==='ready'?'新版本已下载':'v'+v));setTimeout(showVer,2500);};
+ver.onclick=check;chk.onclick=check;
+let tt;cockpit.onToast(m=>{toast.textContent=m;toast.style.display='block';clearTimeout(tt);tt=setTimeout(()=>toast.style.display='none',4000);});
+cockpit.onUpdate(u=>{
+  if(u.state==='ready'){upd.style.display='block';upd.textContent='v'+u.version+' 已就绪，点击重启更新';upd.onclick=()=>cockpit.installUpdate();}
+  if(u.state==='error')upd.style.display='none';
+});
 </script></body></html>
