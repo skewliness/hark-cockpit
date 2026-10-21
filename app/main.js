@@ -122,7 +122,7 @@ ipcMain.handle('nav', (_e, dir) => {
 app.whenReady().then(() => {
   load();
   Menu.setApplicationMenu(null);
-  win = new BaseWindow({ width: 1360, height: 880, minWidth: 900, minHeight: 600, title: 'Hark Cockpit', backgroundColor: '#EEF2F8', titleBarStyle: 'hidden' });
+  win = new BaseWindow({ width: 1360, height: 880, minWidth: 900, minHeight: 600, title: 'Hark Cockpit', backgroundColor: '#222A31', titleBarStyle: 'hidden', titleBarOverlay: { color: '#222A31', symbolColor: '#ECE6DB', height: 51 } });
   sidebar = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
   win.contentView.addChildView(sidebar);
   sidebar.webContents.loadFile(path.join(__dirname, 'sidebar.html'));
