@@ -10,14 +10,26 @@ h1{margin:0;font-size:30px;line-height:1.2;font-weight:600;letter-spacing:-.2px}
 .ver{margin-top:8px;color:var(--dim);font-size:12.5px}
 /* 账号名册：一行一个账号，不是一堆卡片 */
 .roster{margin-top:32px;border:1px solid var(--seam);border-radius:14px;background:var(--ledge);overflow:hidden}
-.row{display:grid;grid-template-columns:44px minmax(0,1fr) 92px 64px auto;align-items:center;gap:16px;padding:14px 18px;border-top:1px solid var(--seam);animation:rise .32s ease-out both}
+.row{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(170px,230px) 52px auto;align-items:center;gap:16px;padding:14px 18px;border-top:1px solid var(--seam);animation:rise .32s ease-out both}
 .row:first-child{border-top:0}
 .row:hover{background:rgba(44,54,63,.45)}
 .row.cur{background:rgba(216,176,106,.06)}
 .row .mono-av{width:40px;height:40px;font-size:16px;border-radius:11px}
 .nm b{display:block;font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nm small{color:var(--dim);font-size:12px}
-.nm small.cur{color:var(--brass)}
+.nm small{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:12px}
+.nm small.ok{color:var(--jade)}
+.nm small .cur{color:var(--brass);margin-left:6px}
+.quota{display:grid;gap:7px}
+.q{display:grid;grid-template-columns:1fr auto;gap:3px 8px;font-size:11.5px;color:var(--haze)}
+.q em{font-style:normal;color:var(--paper);font-weight:600}
+.q .bar{grid-column:1/-1;height:4px;border-radius:4px;background:var(--seam);overflow:hidden}
+.q .bar i{display:block;height:100%;border-radius:4px;background:var(--jade)}
+.q.warn .bar i{background:var(--brass)}.q.hot .bar i{background:var(--rust)}.q.hot em{color:var(--rust)}
+.qmsg{font-size:12px;color:var(--dim)}
+.tip{margin-top:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;border-radius:12px;border:1px dashed rgba(216,176,106,.45);color:var(--haze);font-size:12.5px}
+.tip b{color:var(--paper);font-weight:600}
+.qhead{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:22px 2px -18px;font-size:12px;color:var(--dim)}
+.qhead button{border:0;background:none;color:var(--brass);cursor:pointer;font-size:12px;padding:2px 4px}
 .state{display:flex;align-items:center;gap:8px;color:var(--haze)}
 .state.ok{color:var(--jade)}
 .key{color:var(--dim);font-size:12px}
@@ -35,13 +47,14 @@ h1{margin:0;font-size:30px;line-height:1.2;font-weight:600;letter-spacing:-.2px}
 .guide li::before{content:counter(s);position:absolute;top:0;left:0;width:22px;height:22px;border-radius:50%;border:1px solid var(--brass);color:var(--brass);display:grid;place-items:center;font-size:12px;font-weight:600}
 .guide li b{display:block;color:var(--paper);font-weight:600;margin-bottom:2px}
 code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 5px;border-radius:4px}
-@media (max-width:860px){.wrap{padding:28px 20px}.row{grid-template-columns:40px minmax(0,1fr) auto;row-gap:8px}.row .key{display:none}.row .state{grid-column:2}.row .acts{grid-column:1/-1;justify-content:flex-end}.guide{grid-template-columns:1fr}.guide ol{grid-template-columns:1fr}}
+@media (max-width:860px){.wrap{padding:28px 20px}.row{grid-template-columns:40px minmax(0,1fr) auto;row-gap:8px}.row .key{display:none}.row .quota{grid-column:2/-1}.row .acts{grid-column:1/-1;justify-content:flex-end}.guide{grid-template-columns:1fr}.guide ol{grid-template-columns:1fr}}
 </style></head><body>
 <div class="wrap">
   <header>
     <div><div class="hello" id="hello"></div><h1 id="headline">还没有账号</h1><div class="ver" id="ver"></div></div>
     <button class="btn pri" id="addBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>添加账号</button>
   </header>
+  <div id="qtip"></div>
   <section class="roster" id="roster" aria-label="账号列表"></section>
   <section class="guide">
     <div><h2>从 Chrome 导入登录</h2><p>不想在这里输谷歌密码，就在 Chrome 里登录好，再一键带过来。</p></div>
@@ -66,7 +79,27 @@ let st={accounts:[],activeId:null},animated=false;
 const addAcc=()=>ask('给新账号起个名字','Hark '+(st.accounts.length+1),name=>cockpit.add({name}),true,'添加账号');
 addBtn.onclick=addAcc;
 const h=new Date().getHours();hello.textContent=h<5?'夜深了':h<11?'早上好':h<14?'中午好':h<18?'下午好':'晚上好';
+const fmtN=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e4?(n/1e3).toFixed(0)+'K':String(Math.round(n));
+const fmtT=t=>{const d=new Date(t);return isNaN(d)?String(t):`${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`};
+function quota(a){
+  if(!a.loggedIn)return '<span class="qmsg">登录后显示额度</span>';
+  if(!st.usageReady)return '<span class="qmsg">额度待识别</span>';
+  const u=a.usage;if(!u)return '<span class="qmsg">正在读取…</span>';
+  if(!u.buckets||!u.buckets.length)return `<span class="qmsg">${u.error||'没有额度数据'}</span>`;
+  return u.buckets.slice(0,2).map(b=>{const p=b.pct??0,cls=p>=90?'hot':p>=70?'warn':'';
+    const val=b.used!=null&&b.limit!=null?`${fmtN(b.used)} / ${fmtN(b.limit)}`:`已用 ${p}%`;
+    const t=b.resets?`${fmtT(b.resets)} 重置`:'';
+    return `<div class="q ${cls}" title="${t}"><span>${b.label}</span><em>${val}</em><div class="bar"><i style="width:${p}%"></i></div></div>`}).join('');
+}
+function renderTip(){
+  if(!st.accounts.some(a=>a.loggedIn)){qtip.innerHTML='';return;}
+  if(!st.usageReady){qtip.innerHTML='<div class="tip"><span><b>还没读到额度。</b>在任一已登录账号里打开一次 设置 → 账单，之后每个账号的额度都会自动显示。</span><button class="btn" id="ob">打开账号去设置</button></div>';ob.onclick=()=>cockpit.openBilling();return;}
+  const ts=st.accounts.map(a=>a.usage&&a.usage.at).filter(Boolean);
+  qtip.innerHTML=`<div class="qhead"><span>${ts.length?'额度更新于 '+fmtT(Math.max(...ts)):''}，每 10 分钟自动刷新</span><button id="rq">立即刷新</button></div>`;
+  rq.onclick=()=>{rq.textContent='刷新中…';cockpit.refreshUsage()};
+}
 function render(){
+  renderTip();
   const n=st.accounts.length,ok=st.accounts.filter(a=>a.loggedIn).length;
   headline.textContent=!n?'还没有账号':ok===n?`${n} 个账号都已登录`:ok?`${n} 个账号，${ok} 个已登录`:`${n} 个账号，都还没登录`;
   roster.innerHTML='';
@@ -75,8 +108,8 @@ function render(){
     const [bg,fg]=tint(a.name),cur=a.id===st.activeId;
     const r=document.createElement('div');r.className='row'+(cur?' cur':'')+(a.loggedIn?'':' off');if(animated)r.style.animation='none';else r.style.animationDelay=(i*45)+'ms';
     r.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div>
-      <div class="nm"><b></b><small class="${cur?'cur':''}">${cur?'上次使用的账号':'独立会话'}</small></div>
-      <div class="state ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.loggedIn?'已登录':'未登录'}</div>
+      <div class="nm"><b></b><small class="${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.loggedIn?'已登录':'未登录'}${cur?'<span class="cur">上次使用</span>':''}</small></div>
+      <div class="quota">${quota(a)}</div>
       <div class="key">${i<9?'Ctrl '+(i+1):''}</div>
       <div class="acts"><button class="btn open">${a.loggedIn?'打开聊天':'去登录'}</button>
       <button class="ib" data-k="reload" title="刷新页面" aria-label="刷新页面">${svg('reload')}</button><button class="ib" data-k="edit" title="重命名" aria-label="重命名">${svg('edit')}</button><button class="ib del" data-k="del" title="删除并清除登录" aria-label="删除并清除登录">${svg('del')}</button></div>`;
