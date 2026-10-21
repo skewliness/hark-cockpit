@@ -125,7 +125,7 @@ ipcMain.handle('nav', (_e, dir) => {
 app.whenReady().then(() => {
   load();
   Menu.setApplicationMenu(null);
-  win = new BaseWindow({ width: 1360, height: 880, minWidth: 900, minHeight: 600, title: 'Hark Cockpit', backgroundColor: '#222A31', titleBarStyle: 'hidden', titleBarOverlay: { color: '#222A31', symbolColor: '#ECE6DB', height: 51 } });
+  win = new BaseWindow({ width: 1360, height: 880, minWidth: 900, minHeight: 600, title: 'Hark Tools', backgroundColor: '#222A31', titleBarStyle: 'hidden', titleBarOverlay: { color: '#222A31', symbolColor: '#ECE6DB', height: 51 } });
   sidebar = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
   win.contentView.addChildView(sidebar);
   sidebar.webContents.loadFile(path.join(__dirname, 'sidebar.html'));
@@ -279,7 +279,7 @@ function setupUpdater() {
     if (notified === v) return; notified = v;
     try {
       const { Notification } = require('electron');
-      if (Notification.isSupported()) { const n = new Notification({ title: 'Hark Cockpit 有新版本', body: `v${v} 已下载好，点这里重启更新` }); n.on('click', () => { app.relaunch(); app.exit(0); }); n.show(); }
+      if (Notification.isSupported()) { const n = new Notification({ title: 'Hark Tools 有新版本', body: `v${v} 已下载好，点这里重启更新` }); n.on('click', () => { app.relaunch(); app.exit(0); }); n.show(); }
     } catch {}
   };
   boot.onReady = ready;
