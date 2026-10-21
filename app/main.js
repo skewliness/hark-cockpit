@@ -41,6 +41,7 @@ function getView(acc) {
   v.webContents.on('page-title-updated', () => pushState());
   v.webContents.on('did-finish-load', () => pushState());
   v.webContents.on('did-navigate-in-page', () => pushState());
+  watchUsage(acc, v.webContents);
   v.webContents.loadURL(acc.url || DEFAULT_URL);
   views.set(acc.id, v);
   return v;
@@ -77,7 +78,7 @@ async function refreshStatus() {
     } catch { loginState[a.id] = false; }
   }));
 }
-function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id] })), activeId, showHome }; }
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], usage: usage[a.id] || null })), activeId, showHome, usageReady: !!usageCfg.url }; }
 let pushT;
 function pushState() {
   clearTimeout(pushT);
@@ -142,6 +143,97 @@ app.whenReady().then(() => {
     pushState();
   });
 });
+
+// ===== 额度检测 =====
+// Hark 没有公开的额度接口。做法：在任一账号里打开“设置 → 账单”时，监听该页面的网络响应，
+// 找到含有额度字段（percent_used / used+limit / resets_at）的 JSON 接口并记住它；
+// 之后用每个账号自己的会话定时请求同一个接口，得到各账号的额度。
+const usageStore = path.join(app.getPath('userData'), 'usage.json');
+let usageCfg = {}; // { url, method, headers, body }
+const usage = {};  // id -> { at, buckets:[{key,label,pct,used,limit,resets}], error }
+try { usageCfg = JSON.parse(fs.readFileSync(usageStore, 'utf8')); } catch {}
+const LABELS = { pool: '本期总额度', monthly: '本月额度', month: '本月额度', daily: '今日额度', day: '今日额度', weekly: '本周额度', week: '本周额度', tokens: '额度', credits: '额度', usage: '额度' };
+function num(v) { const n = typeof v === 'string' ? parseFloat(v) : v; return Number.isFinite(n) ? n : null; }
+function parseUsage(obj) {
+  const out = [];
+  const walk = (o, key, depth) => {
+    if (!o || typeof o !== 'object' || depth > 6) return;
+    if (Array.isArray(o)) { o.forEach((x, i) => walk(x, key + i, depth + 1)); return; }
+    const k = Object.keys(o);
+    const pick = (...names) => { for (const n of names) { const f = k.find(x => x.toLowerCase().replace(/[_-]/g, '') === n); if (f != null && o[f] != null) return o[f]; } return null; };
+    let pct = num(pick('percentused', 'usedpercent', 'percentage', 'percent', 'usagepercent'));
+    const used = num(pick('used', 'consumed', 'spent', 'usedtokens', 'tokensused', 'usedcredits'));
+    const limit = num(pick('limit', 'total', 'quota', 'max', 'allowance', 'totaltokens', 'tokenlimit', 'creditlimit'));
+    const remaining = num(pick('remaining', 'left', 'available'));
+    const resets = pick('resetsat', 'resetat', 'resetsAt', 'periodend', 'renewsat', 'nextreset');
+    if (pct == null && used != null && limit) pct = used / limit * 100;
+    if (pct == null && remaining != null && limit) pct = (limit - remaining) / limit * 100;
+    if (pct != null && pct <= 1 && pct > 0 && used == null && /ratio|fraction/i.test(k.join())) pct *= 100;
+    if (pct != null || (used != null && limit != null)) {
+      const lk = String(key || '').toLowerCase();
+      out.push({ key: lk, label: LABELS[lk] || (lk ? lk : '额度'), pct: pct == null ? null : Math.max(0, Math.min(100, Math.round(pct * 10) / 10)),
+        used, limit: limit ?? (remaining != null && used != null ? used + remaining : null), resets: resets || null });
+      return;
+    }
+    for (const x of k) walk(o[x], x, depth + 1);
+  };
+  walk(obj, '', 0);
+  return out;
+}
+const SKIP_HEADERS = /^(cookie|host|content-length|accept-encoding|connection|origin|referer|sec-|user-agent|:)/i;
+function watchUsage(acc, wc) {
+  try { wc.debugger.attach('1.3'); } catch { return; }
+  const reqs = new Map();
+  wc.debugger.sendCommand('Network.enable').catch(() => {});
+  wc.debugger.on('message', async (_e, method, p) => {
+    if (method === 'Network.requestWillBeSent') reqs.set(p.requestId, p.request);
+    if (method !== 'Network.responseReceived') return;
+    const r = p.response;
+    if (!/hark\.com/.test(r.url) || !/json/i.test(r.mimeType || '') || r.status !== 200) return;
+    try {
+      const { body, base64Encoded } = await wc.debugger.sendCommand('Network.getResponseBody', { requestId: p.requestId });
+      if (body.length > 300000) return;
+      const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body;
+      if (!/percent|used|limit|quota|resets|credit/i.test(text)) return;
+      const buckets = parseUsage(JSON.parse(text));
+      if (!buckets.length) return;
+      const rq = reqs.get(p.requestId) || { url: r.url, method: 'GET', headers: {} };
+      const headers = {}; for (const [h, v] of Object.entries(rq.headers || {})) if (!SKIP_HEADERS.test(h)) headers[h] = v;
+      const isNew = usageCfg.url !== rq.url;
+      usageCfg = { url: rq.url, method: rq.method || 'GET', headers, body: rq.postData || null };
+      fs.writeFileSync(usageStore, JSON.stringify(usageCfg, null, 2));
+      usage[acc.id] = { at: Date.now(), buckets };
+      if (isNew) { toast('已识别到额度接口，正在读取所有账号的额度'); pollUsage(); }
+      pushState();
+    } catch {}
+  });
+  wc.on('destroyed', () => { try { wc.debugger.detach(); } catch {} });
+}
+async function fetchUsage(acc) {
+  if (!usageCfg.url) return;
+  try {
+    const ses = session.fromPartition(partitionOf(acc.id));
+    const res = await ses.fetch(usageCfg.url, { method: usageCfg.method, headers: { ...usageCfg.headers, 'user-agent': UA }, body: usageCfg.method === 'GET' ? undefined : usageCfg.body, credentials: 'include' });
+    if (res.status === 401 || res.status === 403) { usage[acc.id] = { at: Date.now(), buckets: [], error: '未登录' }; return; }
+    if (!res.ok) { usage[acc.id] = { ...(usage[acc.id] || {}), error: '读取失败 ' + res.status }; return; }
+    const buckets = parseUsage(await res.json());
+    usage[acc.id] = buckets.length ? { at: Date.now(), buckets } : { at: Date.now(), buckets: [], error: '没有额度数据' };
+  } catch (e) { usage[acc.id] = { ...(usage[acc.id] || {}), error: '网络错误' }; }
+}
+let polling = false;
+async function pollUsage() {
+  if (polling || !usageCfg.url) return; polling = true;
+  try { await refreshStatus(); await Promise.all(accounts.filter(a => loginState[a.id]).map(fetchUsage)); } finally { polling = false; pushState(); }
+}
+ipcMain.handle('refreshUsage', () => pollUsage());
+ipcMain.handle('openBilling', () => {
+  const acc = accounts.find(a => a.id === activeId && loginState[a.id]) || accounts.find(a => loginState[a.id]);
+  if (!acc) { toast('先登录一个账号'); return; }
+  activate(acc.id);
+  toast('在这个账号里打开 设置 → 账单 页面，额度会自动识别');
+});
+app.whenReady().then(() => { setTimeout(pollUsage, 4000); setInterval(pollUsage, 10 * 60 * 1000); });
+
 // 远程更新：由 bootstrap.js 从 GitHub 拉取新版界面/逻辑代码，点击后重启生效
 const boot = global.__cockpitBoot || {};
 function setupUpdater() {
