@@ -1,5 +1,5 @@
 // 启动器：优先运行从 GitHub 下载的最新代码，失败则回退到内置版本。
-const { app } = require('electron');
+const { app, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -27,7 +27,8 @@ function pickDir() {
 
 async function get(url, json) {
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 15000);
-  try { const r = await fetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { signal: ctl.signal });
+  try { await app.whenReady(); const doFetch = (net && net.fetch) ? net.fetch.bind(net) : fetch;
+    const r = await doFetch(url + (url.includes('?') ? '&' : '?') + 't=' + Date.now(), { signal: ctl.signal });
     if (!r.ok) throw new Error(r.status); return json ? r.json() : r.text(); } finally { clearTimeout(t); }
 }
 
@@ -54,6 +55,7 @@ boot.check = () => busy || (busy = (async () => {
   return reached ? 'error' : 'offline';
 })().finally(() => { busy = null; }));
 
+app.whenReady().then(() => setTimeout(() => boot.check(), 3000));
 try { require(path.join(running.dir, 'main.js')); }
 catch (e) { // 下载的版本出错时回退到内置版本
   if (running.dir !== bundledDir) { fs.rmSync(running.dir, { recursive: true, force: true }); boot.version = readVer(bundledDir); require(path.join(bundledDir, 'main.js')); }
