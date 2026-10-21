@@ -1,0 +1,17 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<style>
+body{width:280px;margin:0;padding:14px;font:13px -apple-system,"Microsoft YaHei",sans-serif;background:#16181d;color:#e6e6e6}
+h1{font-size:14px;margin:0 0 10px}
+select,input[type=text],button{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #3a3f4b;background:#22252c;color:#fff;margin-bottom:8px;font-size:13px}
+button{background:#2f6fed;border:0;cursor:pointer;font-weight:600}button:disabled{opacity:.5}
+label{display:flex;gap:6px;align-items:center;font-size:12px;opacity:.85;margin-bottom:8px}
+#msg{font-size:12px;min-height:16px;line-height:1.5}.err{color:#ff7b7b}.ok{color:#5fd38d}
+</style></head><body>
+<h1>导入到 Hark Cockpit</h1>
+<select id="acc"></select>
+<input type="text" id="nm" placeholder="新账号名称" style="display:none">
+<button id="go">导入当前浏览器的 Hark 登录</button>
+<label><input type="checkbox" id="sync"> 实时同步到这个账号</label>
+<div id="msg"></div>
+<script src="common.js"></script><script src="popup.js"></script>
+</body></html>
