@@ -262,12 +262,23 @@ app.whenReady().then(() => { setTimeout(pollUsage, 4000); setInterval(pollUsage,
 // 远程更新：由 bootstrap.js 从 GitHub 拉取新版界面/逻辑代码，点击后重启生效
 const boot = global.__cockpitBoot || {};
 function setupUpdater() {
-  const send = (s) => sidebar?.webContents.send('update', s);
-  boot.onReady = (v) => send({ state: 'ready', version: v });
+  const send = (s) => { for (const x of [sidebar, toolbar, home]) x?.webContents.send('update', s); };
+  if (process.platform === 'win32') app.setAppUserModelId('com.hark.cockpit');
+  let notified = null;
+  const ready = (v) => {
+    send({ state: 'ready', version: v });
+    if (notified === v) return; notified = v;
+    try {
+      const { Notification } = require('electron');
+      if (Notification.isSupported()) { const n = new Notification({ title: 'Hark Cockpit 有新版本', body: `v${v} 已下载好，点这里重启更新` }); n.on('click', () => { app.relaunch(); app.exit(0); }); n.show(); }
+    } catch {}
+  };
+  boot.onReady = ready;
+  for (const x of [toolbar, home]) x?.webContents.on('did-finish-load', () => { if (boot.pending) send({ state: 'ready', version: boot.pending }); });
   if (boot.pending) send({ state: 'ready', version: boot.pending });
   sidebar.webContents.on('did-finish-load', () => { if (boot.pending) send({ state: 'ready', version: boot.pending }); });
   boot.check?.();
-  setInterval(() => boot.check?.(), 30 * 60 * 1000);
+  setInterval(() => boot.check?.(), 5 * 60 * 1000); // 每 5 分钟自动检查一次
 }
 ipcMain.handle('installUpdate', () => { app.relaunch(); app.exit(0); });
 ipcMain.handle('checkUpdate', async () => (boot.check ? await boot.check() : null));
