@@ -228,10 +228,11 @@ function diagWs(method, p) {
   try { diagAdd({ t: Date.now(), stream: method.includes('eventSource') ? 'sse' : 'ws', keys: shape(JSON.parse(data)) }); } catch { diagAdd({ t: Date.now(), stream: 'text', hint: data.replace(/[A-Za-z0-9+/=_-]{24,}/g, '…').slice(0, 300) }); }
 }
 ipcMain.handle('exportDiag', async () => {
-  const f = path.join(app.getPath('desktop'), 'hark-cockpit-diag.json');
-  fs.writeFileSync(f, JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: usageCfg.url.split('?')[0] } : null, entries: diag }, null, 2));
+  let f = path.join(app.getPath('desktop'), 'hark-cockpit-diag.json');
+  const data = JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: usageCfg.url.split('?')[0] } : null, entries: diag }, null, 2);
+  try { fs.writeFileSync(f, data); } catch { f = path.join(app.getPath('userData'), 'hark-cockpit-diag.json'); fs.writeFileSync(f, data); }
   shell.showItemInFolder(f);
-  toast('诊断文件已保存到桌面：hark-cockpit-diag.json');
+  toast(`诊断文件已保存（${diag.length} 条记录），已打开所在文件夹`);
 });
 async function fetchUsage(acc) {
   if (!usageCfg.url) return;
