@@ -87,7 +87,7 @@ app.whenReady().then(() => {
   win = new BaseWindow({ width: 1320, height: 860, title: 'Hark Cockpit' });
   sidebar = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
   win.contentView.addChildView(sidebar);
-  sidebar.webContents.loadFile('sidebar.html');
+  sidebar.webContents.loadFile(path.join(__dirname, 'sidebar.html'));
   win.on('resize', layout);
   win.on('maximize', layout); win.on('unmaximize', layout);
   layout();
