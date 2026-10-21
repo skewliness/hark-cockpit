@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Hark Cockpit 登录导入",
+  "version": "1.0.0",
+  "description": "把浏览器里的 Hark 登录状态一键导入 Hark Cockpit 桌面软件，可开启实时同步。",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": ["https://*.hark.com/*", "https://hark.com/*", "http://127.0.0.1:47321/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "导入到 Hark Cockpit" }
+}
