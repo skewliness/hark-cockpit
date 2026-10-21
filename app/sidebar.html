@@ -1,0 +1,71 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  body{margin:0;font:14px -apple-system,"Microsoft YaHei",sans-serif;background:#16181d;color:#e6e6e6;height:100vh;display:flex;flex-direction:column;user-select:none}
+  h1{font-size:15px;margin:16px 14px 10px;letter-spacing:.5px}
+  #list{flex:1;overflow:auto;padding:0 8px}
+  .acc{display:flex;align-items:center;gap:8px;padding:10px;border-radius:8px;cursor:pointer;margin-bottom:4px}
+  .acc:hover{background:#22252c}.acc.on{background:#2f6fed}
+  .dot{width:28px;height:28px;border-radius:50%;background:#3a3f4b;display:flex;align-items:center;justify-content:center;font-weight:600;flex:none}
+  .acc.on .dot{background:#fff;color:#2f6fed}
+  .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .k{display:none;font-size:11px;opacity:.6}.acc:hover .k{display:inline}
+  #add{margin:10px;padding:10px;border:1px dashed #555;border-radius:8px;background:none;color:#ccc;cursor:pointer}
+  #add:hover{border-color:#2f6fed;color:#fff}
+  #menu{position:fixed;display:none;background:#262a32;border-radius:8px;padding:4px;box-shadow:0 6px 20px #0008}
+  #menu div{padding:8px 14px;cursor:pointer;border-radius:6px}#menu div:hover{background:#2f6fed}
+  #dlg{position:fixed;inset:0;background:#0009;display:none;align-items:center;justify-content:center}
+  #dlg .box{background:#262a32;padding:16px;border-radius:10px;width:180px}
+  #dlg .t{margin-bottom:10px;font-size:13px}
+  #dlg input{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #444;background:#16181d;color:#fff;outline:none}
+  #dlg .b{display:flex;gap:6px;margin-top:10px}#dlg button{flex:1;padding:7px;border:0;border-radius:6px;cursor:pointer;background:#3a3f4b;color:#fff}
+  #dlg button.ok{background:#2f6fed}
+  #upd{margin:0 10px;padding:9px;border-radius:8px;background:#1f8a4c;color:#fff;text-align:center;cursor:pointer;display:none;font-size:13px}
+  #ver{font-size:11px;opacity:.45;text-align:center;margin-bottom:8px;cursor:pointer}
+</style></head><body>
+<h1>Hark Cockpit</h1>
+<div id="list"></div>
+<div id="upd"></div>
+<button id="add">＋ 添加 Hark 账号</button>
+<div id="ver" title="点击检查更新"></div>
+<div id="dlg"><div class="box"><div class="t" id="dt"></div><input id="di"><div class="b"><button id="dc">取消</button><button class="ok" id="do">确定</button></div></div></div>
+<div id="menu"><div data-a="rename">重命名</div><div data-a="reload">刷新</div><div data-a="remove">删除（清除登录）</div></div>
+<script>
+function ask(title,def,cb,withInput=true){const d=dlg,i=di;dt.textContent=title;i.style.display=withInput?'':'none';i.value=def||'';d.style.display='flex';if(withInput){i.focus();i.select();}
+ const done=v=>{d.style.display='none';dob.onclick=dc.onclick=i.onkeydown=null;if(v!==null)cb(v)};
+ const dob=document.getElementById('do');dob.onclick=()=>done(withInput?(i.value.trim()||def):true);dc.onclick=()=>done(null);
+ i.onkeydown=e=>{if(e.key==='Enter')dob.click();if(e.key==='Escape')dc.click()};}
+let st={accounts:[],activeId:null}, ctxId=null;
+const list=document.getElementById('list'), menu=document.getElementById('menu');
+function render(){
+  list.innerHTML='';
+  st.accounts.forEach((a,i)=>{
+    const el=document.createElement('div'); el.className='acc'+(a.id===st.activeId?' on':'');
+    el.innerHTML=`<div class="dot">${(a.name||'H')[0].toUpperCase()}</div><div class="name"></div><span class="k">${i<9?'Ctrl+'+(i+1):''}</span>`;
+    el.querySelector('.name').textContent=a.name;
+    el.onclick=()=>cockpit.switchTo(a.id);
+    el.oncontextmenu=e=>{e.preventDefault();ctxId=a.id;menu.style.left=e.clientX+'px';menu.style.top=e.clientY+'px';menu.style.display='block'};
+    list.appendChild(el);
+  });
+}
+document.onclick=()=>menu.style.display='none';
+menu.onclick=async e=>{e.stopPropagation();menu.style.display='none';
+  const act=e.target.dataset.a; if(!act||!ctxId) return;
+  const id=ctxId; if(act==='rename'){const a=st.accounts.find(x=>x.id===id);ask('新名称：',a&&a.name,n=>cockpit.rename(id,n));}
+  if(act==='reload') cockpit.reload(ctxId);
+  if(act==='remove') ask('删除该账号并清除它的登录状态？','',()=>cockpit.remove(id),false);
+};
+document.getElementById('add').onclick=()=>{
+  ask('给这个账号起个名字：','Hark '+(st.accounts.length+1),name=>cockpit.add({name}));
+};
+document.addEventListener('keydown',e=>{const n=+e.key; if((e.ctrlKey||e.metaKey)&&n>=1&&n<=9&&st.accounts[n-1]) cockpit.switchTo(st.accounts[n-1].id);});
+cockpit.onState(s=>{st=s;render()});
+cockpit.version().then(v=>ver.textContent='v'+v);
+ver.onclick=async()=>{ver.textContent='检查更新中…';const r=await cockpit.checkUpdate();const v=await cockpit.version();ver.textContent=r==='latest'?'已是最新 v'+v:(r==='offline'?'无法连接更新服务器':'v'+v);setTimeout(()=>ver.textContent='v'+v,2500);};
+cockpit.onUpdate(u=>{
+  if(u.state==='downloading'){upd.style.display='block';upd.style.cursor='default';upd.textContent='正在下载新版本'+(u.percent!=null?' '+u.percent+'%':'…');upd.onclick=null;}
+  if(u.state==='ready'){upd.style.display='block';upd.style.cursor='pointer';upd.textContent='新版本 v'+u.version+' 已就绪，点击重启更新';upd.onclick=()=>cockpit.installUpdate();}
+  if(u.state==='error'){upd.style.display='none';}
+});
+cockpit.getState().then(s=>{st=s;render()});
+</script></body></html>
