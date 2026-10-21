@@ -10,5 +10,6 @@ contextBridge.exposeInMainWorld('cockpit', {
   checkUpdate: () => ipcRenderer.invoke('checkUpdate'),
   version: () => ipcRenderer.invoke('version'),
   onUpdate: (cb) => ipcRenderer.on('update', (_e, s) => cb(s)),
+  onToast: (cb) => ipcRenderer.on('toast', (_e, s) => cb(s)),
   onState: (cb) => ipcRenderer.on('state', (_e, s) => cb(s)),
 });
