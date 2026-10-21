@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('cockpit', {
   remove: (id) => ipcRenderer.invoke('remove', id),
   win: (a) => ipcRenderer.invoke('win', a),
   nav: (d) => ipcRenderer.invoke('nav', d),
+  refreshUsage: () => ipcRenderer.invoke('refreshUsage'),
+  openBilling: () => ipcRenderer.invoke('openBilling'),
   home: () => ipcRenderer.invoke('home'),
   getState: () => ipcRenderer.invoke('getState'),
   installUpdate: () => ipcRenderer.invoke('installUpdate'),
