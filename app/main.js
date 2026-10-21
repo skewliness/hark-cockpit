@@ -2,6 +2,7 @@
 const { app, BaseWindow, WebContentsView, ipcMain, session, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 
 const SIDEBAR_W = 220;
 const DEFAULT_URL = 'https://app.hark.com';
@@ -111,4 +112,62 @@ ipcMain.handle('installUpdate', () => { app.relaunch(); app.exit(0); });
 ipcMain.handle('checkUpdate', async () => (boot.check ? await boot.check() : null));
 ipcMain.handle('version', () => boot.version || app.getVersion());
 app.whenReady().then(() => setTimeout(setupUpdater, 1500));
+
+// ===== 浏览器登录导入桥（配合 Hark Cockpit Chrome 插件）=====
+const BRIDGE_PORT = 47321;
+function toast(msg) { sidebar?.webContents.send('toast', msg); }
+async function importCookies(accId, cookies) {
+  const acc = accounts.find(a => a.id === accId);
+  if (!acc) throw new Error('账号不存在');
+  const ses = session.fromPartition(partitionOf(acc.id));
+  let ok = 0;
+  for (const c of cookies || []) {
+    try {
+      const host = String(c.domain || '').replace(/^\./, '');
+      if (!/(^|\.)hark\.com$/.test(host)) continue;
+      const d = { url: `https://${host}${c.path || '/'}`, name: c.name, value: c.value, path: c.path || '/',
+        secure: !!c.secure, httpOnly: !!c.httpOnly };
+      if (!c.hostOnly && !c.name.startsWith('__Host-')) d.domain = c.domain;
+      if (c.expirationDate) d.expirationDate = c.expirationDate;
+      if (c.sameSite && ['unspecified','no_restriction','lax','strict'].includes(c.sameSite)) d.sameSite = c.sameSite;
+      await ses.cookies.set(d); ok++;
+    } catch (e) { /* 跳过个别无法写入的 cookie */ }
+  }
+  await ses.cookies.flushStore();
+  return ok;
+}
+function startBridge() {
+  const srv = http.createServer((req, res) => {
+    const origin = req.headers.origin || '';
+    if (origin && !/^(chrome-extension|moz-extension|extension):\/\//.test(origin)) { res.writeHead(403); return res.end(); }
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Headers', 'content-type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
+    if (req.method === 'GET' && req.url === '/accounts') return json(200, { accounts: accounts.map(a => ({ id: a.id, name: a.name })), activeId });
+    if (req.method === 'POST' && req.url === '/import') {
+      let body = ''; req.on('data', d => { body += d; if (body.length > 2e6) req.destroy(); });
+      req.on('end', async () => {
+        try {
+          const { accountId, cookies, newName, silent } = JSON.parse(body || '{}');
+          let id = accountId;
+          if (!id || id === '__new__') { const acc = { id: Date.now().toString(36), name: newName || `Hark ${accounts.length + 1}`, url: DEFAULT_URL }; accounts.push(acc); save(); id = acc.id; }
+          const n = await importCookies(id, cookies);
+          const acc = accounts.find(a => a.id === id);
+          const v = views.get(id);
+          if (v && !silent) v.webContents.loadURL(acc.url || DEFAULT_URL);
+          if (!silent) { activate(id); win.show(); win.focus(); toast(`已从浏览器导入「${acc.name}」的登录`); }
+          pushState();
+          json(200, { ok: true, count: n, accountId: id });
+        } catch (e) { json(400, { ok: false, error: String(e.message || e) }); }
+      });
+      return;
+    }
+    json(404, { ok: false });
+  });
+  srv.on('error', () => toast('导入服务启动失败：端口 47321 被占用'));
+  srv.listen(BRIDGE_PORT, '127.0.0.1');
+}
+app.whenReady().then(startBridge);
 app.on('window-all-closed', () => app.quit());
