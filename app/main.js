@@ -159,10 +159,21 @@ app.whenReady().then(() => {
 const usageStore = path.join(app.getPath('userData'), 'usage.json');
 let usageCfg = {}; // { url, method, headers, body }
 const usage = {};  // id -> { at, buckets:[{key,label,pct,used,limit,resets}], error }
-try { usageCfg = JSON.parse(fs.readFileSync(usageStore, 'utf8')); } catch {}
+// v1.3.9：从诊断文件确认，额度来自 GET /api/billing/summary 的 meters.harkTokens
+const USAGE_URL = 'https://app.hark.com/api/billing/summary';
+usageCfg = { url: USAGE_URL, method: 'GET', headers: { accept: 'application/json' }, body: null };
+function parseHark(j) {
+  const m = j && j.meters && j.meters.harkTokens; if (!m) return null;
+  const b = (key, used, limit, resets) => ({ key, label: LABELS[key], used: num(used), limit: num(limit), resets: resets || null,
+    pct: num(limit) ? Math.max(0, Math.min(100, Math.round(num(used) / num(limit) * 1000) / 10)) : null });
+  const out = [b('pool', m.poolUsed, m.poolLimit, m.poolResetsAt), b('daily', m.dailyUsed, m.dailyLimit, m.dailyResetsAt)].filter(x => x.limit);
+  if (!out.length && j.plan && j.plan.unlimited) return [{ key: 'pool', label: '不限额度', pct: 0, used: null, limit: null, resets: null }];
+  return out;
+}
 const LABELS = { pool: '本期总额度', monthly: '本月额度', month: '本月额度', daily: '今日额度', day: '今日额度', weekly: '本周额度', week: '本周额度', tokens: '额度', credits: '额度', usage: '额度' };
 function num(v) { const n = typeof v === 'string' ? parseFloat(v) : v; return Number.isFinite(n) ? n : null; }
 function parseUsage(obj) {
+  const h = parseHark(obj); if (h) return h;
   const out = [];
   const walk = (o, key, depth) => {
     if (!o || typeof o !== 'object' || depth > 6) return;
@@ -209,13 +220,8 @@ function watchUsage(acc, wc) {
       if (!/percent|used|limit|quota|resets|credit/i.test(text)) return;
       const buckets = parseUsage(JSON.parse(text));
       if (!buckets.length) return;
-      const rq = reqs.get(p.requestId) || { url: r.url, method: 'GET', headers: {} };
-      const headers = {}; for (const [h, v] of Object.entries(rq.headers || {})) if (!SKIP_HEADERS.test(h)) headers[h] = v;
-      const isNew = usageCfg.url !== rq.url;
-      usageCfg = { url: rq.url, method: rq.method || 'GET', headers, body: rq.postData || null };
-      fs.writeFileSync(usageStore, JSON.stringify(usageCfg, null, 2));
+      if (r.url.split('?')[0] !== USAGE_URL) return;
       usage[acc.id] = { at: Date.now(), buckets };
-      if (isNew) { toast('已识别到额度接口，正在读取所有账号的额度'); pollUsage(); }
       pushState();
     } catch {}
   });
@@ -246,9 +252,17 @@ ipcMain.handle('exportDiag', async () => {
 async function fetchUsage(acc) {
   if (!usageCfg.url) return;
   try {
+    // 优先在账号自己的页面里请求（同源、带 Cloudflare 放行凭证），没有页面时再用会话直接请求
+    const v = views.get(acc.id);
+    if (v && !v.webContents.isDestroyed() && /^https:\/\/app\.hark\.com/.test(v.webContents.getURL())) {
+      const r = await v.webContents.executeJavaScript(`fetch('/api/billing/summary',{credentials:'include',headers:{accept:'application/json'}}).then(async r=>({s:r.status,j:r.ok?await r.json():null})).catch(()=>({s:0}))`);
+      if (r.s === 401) { usage[acc.id] = { at: Date.now(), buckets: [], error: '未登录' }; return; }
+      if (r.j) { const buckets = parseUsage(r.j); usage[acc.id] = buckets.length ? { at: Date.now(), buckets } : { at: Date.now(), buckets: [], error: '没有额度数据' }; return; }
+    }
     const ses = session.fromPartition(partitionOf(acc.id));
     const res = await ses.fetch(usageCfg.url, { method: usageCfg.method, headers: { ...usageCfg.headers, 'user-agent': UA }, body: usageCfg.method === 'GET' ? undefined : usageCfg.body, credentials: 'include' });
-    if (res.status === 401 || res.status === 403) { usage[acc.id] = { at: Date.now(), buckets: [], error: '未登录' }; return; }
+    if (res.status === 401) { usage[acc.id] = { at: Date.now(), buckets: [], error: '未登录' }; return; }
+    if (res.status === 403) { usage[acc.id] = { ...(usage[acc.id] || {}), error: '暂时读不到，打开一次该账号即可' }; return; }
     if (!res.ok) { usage[acc.id] = { ...(usage[acc.id] || {}), error: '读取失败 ' + res.status }; return; }
     const buckets = parseUsage(await res.json());
     usage[acc.id] = buckets.length ? { at: Date.now(), buckets } : { at: Date.now(), buckets: [], error: '没有额度数据' };
