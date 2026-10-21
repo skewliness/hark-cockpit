@@ -92,10 +92,10 @@ function quota(a){
     return `<div class="q ${cls}" title="${t}"><span>${b.label}</span><em>${val}</em><div class="bar"><i style="width:${p}%"></i></div></div>`}).join('');
 }
 function renderTip(){
-  if(!st.accounts.some(a=>a.loggedIn)){qtip.innerHTML='';return;}
+  if(!st.accounts.some(a=>a.loggedIn)){qtip.innerHTML='<div class="qhead"><button id="ex3">导出诊断文件</button></div>';ex3.onclick=()=>cockpit.exportDiag();return;}
   if(!st.usageReady){qtip.innerHTML='<div class="tip"><span><b>还没读到额度。</b>先在任一已登录账号里正常聊几句、打开一下设置，再点「导出诊断文件」发给 Hark，用来找到额度数据的来源。文件只含接口地址和字段名，没有聊天内容和登录信息。</span><span style="display:flex;gap:8px"><button class="btn" id="ob">打开账号</button><button class="btn pri" id="ex">导出诊断文件</button></span></div>';ob.onclick=()=>cockpit.openBilling();ex.onclick=()=>cockpit.exportDiag();return;}
   const ts=st.accounts.map(a=>a.usage&&a.usage.at).filter(Boolean);
-  qtip.innerHTML=`<div class="qhead"><span>${ts.length?'额度更新于 '+fmtT(Math.max(...ts)):''}，每 10 分钟自动刷新</span><button id="rq">立即刷新</button></div>`;
+  qtip.innerHTML=`<div class="qhead"><span>${ts.length?'额度更新于 '+fmtT(Math.max(...ts))+'，':''}每 10 分钟自动刷新</span><button id="rq">立即刷新</button><button id="ex2">导出诊断文件</button></div>`;ex2.onclick=()=>cockpit.exportDiag();
   rq.onclick=()=>{rq.textContent='刷新中…';cockpit.refreshUsage()};
 }
 function render(){
