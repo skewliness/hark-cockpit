@@ -230,7 +230,7 @@ ipcMain.handle('openBilling', () => {
   const acc = accounts.find(a => a.id === activeId && loginState[a.id]) || accounts.find(a => loginState[a.id]);
   if (!acc) { toast('先登录一个账号'); return; }
   activate(acc.id);
-  toast('在这个账号里打开 设置 → 账单 页面，额度会自动识别');
+  toast('点右上角头像，再点顶部的套餐卡片打开账单，额度会自动识别');
 });
 app.whenReady().then(() => { setTimeout(pollUsage, 4000); setInterval(pollUsage, 10 * 60 * 1000); });
 
