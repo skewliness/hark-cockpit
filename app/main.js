@@ -4,7 +4,8 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 
-const SIDEBAR_W = 220;
+const SIDEBAR_W = 264;
+const TOOLBAR_H = 52;
 const DEFAULT_URL = 'https://app.hark.com';
 // 去掉 Electron 标识，降低 Google 登录拦截“此浏览器不安全”的概率
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -13,7 +14,8 @@ const store = path.join(app.getPath('userData'), 'accounts.json');
 let accounts = [];      // [{id, name, url}]
 let activeId = null;
 const views = new Map(); // id -> WebContentsView
-let win, sidebar;
+let win, sidebar, home, toolbar;
+let showHome = false;
 
 function load() {
   try { const d = JSON.parse(fs.readFileSync(store, 'utf8')); accounts = d.accounts || []; activeId = d.activeId; } catch { accounts = []; }
@@ -37,6 +39,8 @@ function getView(acc) {
     return { action: 'deny' };
   });
   v.webContents.on('page-title-updated', () => pushState());
+  v.webContents.on('did-finish-load', () => pushState());
+  v.webContents.on('did-navigate-in-page', () => pushState());
   v.webContents.loadURL(acc.url || DEFAULT_URL);
   views.set(acc.id, v);
   return v;
@@ -45,23 +49,46 @@ function getView(acc) {
 function layout() {
   const [w, h] = win.getContentSize();
   sidebar.setBounds({ x: 0, y: 0, width: SIDEBAR_W, height: h });
-  for (const [id, v] of views) {
-    v.setBounds(id === activeId ? { x: SIDEBAR_W, y: 0, width: w - SIDEBAR_W, height: h } : { x: 0, y: 0, width: 0, height: 0 });
-  }
+  toolbar?.setBounds({ x: SIDEBAR_W, y: 0, width: Math.max(0, w - SIDEBAR_W), height: TOOLBAR_H });
+  const main = { x: SIDEBAR_W, y: TOOLBAR_H, width: Math.max(0, w - SIDEBAR_W), height: Math.max(0, h - TOOLBAR_H) }, hidden = { x: 0, y: 0, width: 0, height: 0 };
+  home?.setBounds(showHome ? main : hidden);
+  for (const [id, v] of views) v.setBounds(!showHome && id === activeId ? main : hidden);
 }
 
 function activate(id) {
   const acc = accounts.find(a => a.id === id);
   if (!acc) return;
-  activeId = id;
+  activeId = id; showHome = false;
   const v = getView(acc);
   if (!win.contentView.children.includes(v)) win.contentView.addChildView(v);
   layout(); save(); pushState();
   v.webContents.focus();
 }
 
+function showOverview() { showHome = true; layout(); pushState(); home?.webContents.focus(); }
+
+// 登录状态：分区里存在 hark.com 的 session cookie 即视为已登录
+const loginState = {};
+async function refreshStatus() {
+  await Promise.all(accounts.map(async a => {
+    try {
+      const cs = await session.fromPartition(partitionOf(a.id)).cookies.get({});
+      loginState[a.id] = cs.some(c => /(^|\.)hark\.com$/.test(c.domain.replace(/^\./, '')) && /session/i.test(c.name));
+    } catch { loginState[a.id] = false; }
+  }));
+}
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id] })), activeId, showHome }; }
+let pushT;
 function pushState() {
-  sidebar?.webContents.send('state', { accounts, activeId });
+  clearTimeout(pushT);
+  pushT = setTimeout(async () => {
+    await refreshStatus();
+    const s = snapshot();
+    const v = views.get(activeId);
+    s.canBack = !!v?.webContents.navigationHistory?.canGoBack(); s.canForward = !!v?.webContents.navigationHistory?.canGoForward();
+    s.maximized = !!win?.isMaximized();
+    for (const x of [sidebar, home, toolbar]) x?.webContents.send('state', s);
+  }, 60);
 }
 
 ipcMain.handle('add', (_e, { name, url }) => {
@@ -78,23 +105,40 @@ ipcMain.handle('remove', async (_e, id) => {
   accounts = accounts.filter(a => a.id !== id);
   if (activeId === id) activeId = accounts[0]?.id || null;
   save();
-  if (activeId) activate(activeId); else { layout(); pushState(); }
+  if (activeId) activate(activeId); else showOverview();
 });
-ipcMain.handle('getState', () => ({ accounts, activeId }));
+ipcMain.handle('getState', async () => { await refreshStatus(); return snapshot(); });
+ipcMain.handle('home', () => showOverview());
+ipcMain.handle('win', (_e, act) => {
+  if (act === 'close') win.close();
+  else if (act === 'min') win.minimize();
+  else if (act === 'max') win.isMaximized() ? win.unmaximize() : win.maximize();
+});
+ipcMain.handle('nav', (_e, dir) => {
+  const h = views.get(activeId)?.webContents.navigationHistory; if (!h) return;
+  if (dir === 'back' && h.canGoBack()) h.goBack(); if (dir === 'forward' && h.canGoForward()) h.goForward();
+});
 
 app.whenReady().then(() => {
   load();
   Menu.setApplicationMenu(null);
-  win = new BaseWindow({ width: 1320, height: 860, title: 'Hark Cockpit' });
+  win = new BaseWindow({ width: 1360, height: 880, minWidth: 900, minHeight: 600, title: 'Hark Cockpit', backgroundColor: '#EEF2F8', titleBarStyle: 'hidden' });
   sidebar = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
   win.contentView.addChildView(sidebar);
   sidebar.webContents.loadFile(path.join(__dirname, 'sidebar.html'));
+  toolbar = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
+  win.contentView.addChildView(toolbar);
+  toolbar.webContents.loadFile(path.join(__dirname, 'toolbar.html'));
+  home = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
+  win.contentView.addChildView(home);
+  home.webContents.loadFile(path.join(__dirname, 'overview.html'));
+  for (const wc of [sidebar.webContents, home.webContents, toolbar.webContents]) wc.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   win.on('resize', layout);
-  win.on('maximize', layout); win.on('unmaximize', layout);
+  win.on('maximize', () => { layout(); pushState(); }); win.on('unmaximize', () => { layout(); pushState(); });
   layout();
   sidebar.webContents.once('did-finish-load', () => {
     if (activeId && accounts.some(a => a.id === activeId)) activate(activeId);
-    else if (accounts[0]) activate(accounts[0].id);
+    else showOverview();
     pushState();
   });
 });
