@@ -28,7 +28,9 @@ function getView(acc) {
   if (views.has(acc.id)) return views.get(acc.id);
   const ses = session.fromPartition(partitionOf(acc.id));
   ses.setUserAgent(UA);
-  const v = new WebContentsView({ webPreferences: { partition: partitionOf(acc.id), contextIsolation: true } });
+  const v = new WebContentsView({ webPreferences: { partition: partitionOf(acc.id), contextIsolation: true, backgroundThrottling: false } });
+  v.setVisible(false);
+  win.contentView.addChildView(v);
   v.webContents.setUserAgent(UA);
   // Google OAuth 等弹窗留在同一会话内，其他外链用系统浏览器打开
   v.webContents.setWindowOpenHandler(({ url }) => {
@@ -52,8 +54,9 @@ function layout() {
   sidebar.setBounds({ x: 0, y: 0, width: SIDEBAR_W, height: h });
   toolbar?.setBounds({ x: SIDEBAR_W, y: 0, width: Math.max(0, w - SIDEBAR_W), height: TOOLBAR_H });
   const main = { x: SIDEBAR_W, y: TOOLBAR_H, width: Math.max(0, w - SIDEBAR_W), height: Math.max(0, h - TOOLBAR_H) }, hidden = { x: 0, y: 0, width: 0, height: 0 };
-  home?.setBounds(showHome ? main : hidden);
-  for (const [id, v] of views) v.setBounds(!showHome && id === activeId ? main : hidden);
+  // 所有账号窗口始终保持同样大小，切换时只改可见性：不触发页面重排，切换几乎是瞬间的
+  if (home) { home.setBounds(main); home.setVisible(!!showHome); }
+  for (const [id, v] of views) { v.setBounds(main); v.setVisible(!showHome && id === activeId); }
 }
 
 function activate(id) {
@@ -61,9 +64,8 @@ function activate(id) {
   if (!acc) return;
   activeId = id; showHome = false;
   const v = getView(acc);
-  if (!win.contentView.children.includes(v)) win.contentView.addChildView(v);
-  layout(); save(); pushState();
-  v.webContents.focus();
+  layout(); v.webContents.focus();
+  setImmediate(() => { save(); pushState(); });
 }
 
 function showOverview() { showHome = true; layout(); pushState(); home?.webContents.focus(); }
@@ -141,6 +143,12 @@ app.whenReady().then(() => {
     if (activeId && accounts.some(a => a.id === activeId)) activate(activeId);
     else showOverview();
     pushState();
+    // 后台预加载其他已登录账号，第一次切过去也不用等页面加载
+    setTimeout(async () => {
+      await refreshStatus();
+      const rest = accounts.filter(x => x.id !== activeId && loginState[x.id] && !views.has(x.id));
+      rest.forEach((x, i) => setTimeout(() => { getView(x); layout(); }, i * 1500));
+    }, 2500);
   });
 });
 
@@ -192,6 +200,7 @@ function watchUsage(acc, wc) {
     const r = p.response;
     if (!/hark\.com/.test(r.url)) return;
     if (!/json/i.test(r.mimeType || '') || r.status !== 200) { diagAdd({ t: Date.now(), url: r.url.split('?')[0], status: r.status, type: r.mimeType }); return; }
+    if (usageCfg.url && r.url.split('?')[0] !== usageCfg.url.split('?')[0] && !/usage|billing|quota|limit|plan|credit|subscription/i.test(r.url)) { diagAdd({ t: Date.now(), url: r.url.split('?')[0], status: r.status }); return; }
     try {
       const { body, base64Encoded } = await wc.debugger.sendCommand('Network.getResponseBody', { requestId: p.requestId });
       if (body.length > 300000) return;
