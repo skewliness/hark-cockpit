@@ -93,7 +93,7 @@ function quota(a){
 }
 function renderTip(){
   if(!st.accounts.some(a=>a.loggedIn)){qtip.innerHTML='';return;}
-  if(!st.usageReady){qtip.innerHTML='<div class="tip"><span><b>还没读到额度。</b>在任一已登录账号里点右上角头像，再点顶部的套餐卡片（如 hark pro）打开账单，之后每个账号的额度都会自动显示。</span><button class="btn" id="ob">打开账号去设置</button></div>';ob.onclick=()=>cockpit.openBilling();return;}
+  if(!st.usageReady){qtip.innerHTML='<div class="tip"><span><b>还没读到额度。</b>先在任一已登录账号里正常聊几句、打开一下设置，再点「导出诊断文件」发给 Hark，用来找到额度数据的来源。文件只含接口地址和字段名，没有聊天内容和登录信息。</span><span style="display:flex;gap:8px"><button class="btn" id="ob">打开账号</button><button class="btn pri" id="ex">导出诊断文件</button></span></div>';ob.onclick=()=>cockpit.openBilling();ex.onclick=()=>cockpit.exportDiag();return;}
   const ts=st.accounts.map(a=>a.usage&&a.usage.at).filter(Boolean);
   qtip.innerHTML=`<div class="qhead"><span>${ts.length?'额度更新于 '+fmtT(Math.max(...ts)):''}，每 10 分钟自动刷新</span><button id="rq">立即刷新</button></div>`;
   rq.onclick=()=>{rq.textContent='刷新中…';cockpit.refreshUsage()};
