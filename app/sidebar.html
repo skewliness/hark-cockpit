@@ -22,9 +22,13 @@
   #dlg button.ok{background:#2f6fed}
   #upd{margin:0 10px;padding:9px;border-radius:8px;background:#1f8a4c;color:#fff;text-align:center;cursor:pointer;display:none;font-size:13px}
   #ver{font-size:11px;opacity:.45;text-align:center;margin-bottom:8px;cursor:pointer}
+  #toast{position:fixed;left:10px;right:10px;bottom:90px;background:#2f6fed;color:#fff;padding:10px;border-radius:8px;font-size:12px;display:none;line-height:1.5}
+  #hint{font-size:11px;opacity:.5;margin:0 14px 8px;line-height:1.5}
 </style></head><body>
 <h1>Hark Cockpit</h1>
 <div id="list"></div>
+<div id="hint">在 Chrome 里登录 Hark 后，点 Hark Cockpit 插件即可导入登录</div>
+<div id="toast"></div>
 <div id="upd"></div>
 <button id="add">＋ 添加 Hark 账号</button>
 <div id="ver" title="点击检查更新"></div>
@@ -60,6 +64,7 @@ document.getElementById('add').onclick=()=>{
 };
 document.addEventListener('keydown',e=>{const n=+e.key; if((e.ctrlKey||e.metaKey)&&n>=1&&n<=9&&st.accounts[n-1]) cockpit.switchTo(st.accounts[n-1].id);});
 cockpit.onState(s=>{st=s;render()});
+let tt;cockpit.onToast(m=>{toast.textContent=m;toast.style.display='block';clearTimeout(tt);tt=setTimeout(()=>toast.style.display='none',4000);});
 cockpit.version().then(v=>ver.textContent='v'+v);
 ver.onclick=async()=>{ver.textContent='检查更新中…';const r=await cockpit.checkUpdate();const v=await cockpit.version();ver.textContent=r==='latest'?'已是最新 v'+v:(r==='offline'?'无法连接更新服务器':'v'+v);setTimeout(()=>ver.textContent='v'+v,2500);};
 cockpit.onUpdate(u=>{
