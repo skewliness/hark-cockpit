@@ -187,13 +187,16 @@ function watchUsage(acc, wc) {
   wc.debugger.sendCommand('Network.enable').catch(() => {});
   wc.debugger.on('message', async (_e, method, p) => {
     if (method === 'Network.requestWillBeSent') reqs.set(p.requestId, p.request);
+    if (method === 'Network.webSocketCreated' || method === 'Network.eventSourceMessageReceived' || method === 'Network.webSocketFrameReceived') diagWs(method, p);
     if (method !== 'Network.responseReceived') return;
     const r = p.response;
-    if (!/hark\.com/.test(r.url) || !/json/i.test(r.mimeType || '') || r.status !== 200) return;
+    if (!/hark\.com/.test(r.url)) return;
+    if (!/json/i.test(r.mimeType || '') || r.status !== 200) { diagAdd({ t: Date.now(), url: r.url.split('?')[0], status: r.status, type: r.mimeType }); return; }
     try {
       const { body, base64Encoded } = await wc.debugger.sendCommand('Network.getResponseBody', { requestId: p.requestId });
       if (body.length > 300000) return;
       const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body;
+      try { diagAdd({ t: Date.now(), method: (reqs.get(p.requestId) || {}).method || 'GET', url: r.url.split('?')[0], status: r.status, keys: shape(JSON.parse(text)) }); } catch {}
       if (!/percent|used|limit|quota|resets|credit/i.test(text)) return;
       const buckets = parseUsage(JSON.parse(text));
       if (!buckets.length) return;
@@ -209,6 +212,27 @@ function watchUsage(acc, wc) {
   });
   wc.on('destroyed', () => { try { wc.debugger.detach(); } catch {} });
 }
+
+// 额度诊断：只记录 hark.com 接口的地址和字段名（不含任何内容、cookie 或令牌），用来找出额度数据从哪来
+const diag = [];
+function diagAdd(x) { if (/\.(js|css|png|jpg|svg|woff2?|webp|ico)$/i.test(x.url)) return; diag.push(x); if (diag.length > 600) diag.shift(); }
+function shape(o, d = 0) {
+  if (Array.isArray(o)) return o.length ? [shape(o[0], d + 1)] : [];
+  if (o && typeof o === 'object') { if (d > 3) return '{…}'; const r = {}; for (const k of Object.keys(o).slice(0, 40)) r[k] = shape(o[k], d + 1); return r; }
+  return typeof o;
+}
+function diagWs(method, p) {
+  if (method === 'Network.webSocketCreated') return diagAdd({ t: Date.now(), ws: true, url: String(p.url).split('?')[0] });
+  const data = method === 'Network.eventSourceMessageReceived' ? p.data : p.response && p.response.payloadData;
+  if (!data || data.length > 100000 || !/percent|quota|limit|usage|credit|resets/i.test(data)) return;
+  try { diagAdd({ t: Date.now(), stream: method.includes('eventSource') ? 'sse' : 'ws', keys: shape(JSON.parse(data)) }); } catch { diagAdd({ t: Date.now(), stream: 'text', hint: data.replace(/[A-Za-z0-9+/=_-]{24,}/g, '…').slice(0, 300) }); }
+}
+ipcMain.handle('exportDiag', async () => {
+  const f = path.join(app.getPath('desktop'), 'hark-cockpit-diag.json');
+  fs.writeFileSync(f, JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: usageCfg.url.split('?')[0] } : null, entries: diag }, null, 2));
+  shell.showItemInFolder(f);
+  toast('诊断文件已保存到桌面：hark-cockpit-diag.json');
+});
 async function fetchUsage(acc) {
   if (!usageCfg.url) return;
   try {
@@ -230,7 +254,7 @@ ipcMain.handle('openBilling', () => {
   const acc = accounts.find(a => a.id === activeId && loginState[a.id]) || accounts.find(a => loginState[a.id]);
   if (!acc) { toast('先登录一个账号'); return; }
   activate(acc.id);
-  toast('点右上角头像，再点顶部的套餐卡片打开账单，额度会自动识别');
+  toast('在这个账号里聊几句、打开一下设置，再回总览导出诊断文件');
 });
 app.whenReady().then(() => { setTimeout(pollUsage, 4000); setInterval(pollUsage, 10 * 60 * 1000); });
 
