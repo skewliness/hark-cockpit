@@ -1,3 +1,11 @@
+/* 字体：
+   正文  HarmonyOS Sans SC：笔画干净、字怀开阔，中英文和数字在同一套里，小字也清楚
+   标题  LXGW WenKai Screen（霞鹜文楷屏幕版）：带手写温度，只用在问候、大标题和品牌上
+   字体从 jsDelivr 加载，按需分片下载；连不上时回退到系统字体 */
+@import url("https://cdn.jsdelivr.net/npm/harmonyos-sans-sc-webfont-splitted@1.1.0/dist/Regular.css");
+@import url("https://cdn.jsdelivr.net/npm/harmonyos-sans-sc-webfont-splitted@1.1.0/dist/Medium.css");
+@import url("https://cdn.jsdelivr.net/npm/harmonyos-sans-sc-webfont-splitted@1.1.0/dist/Bold.css");
+@import url("https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/lxgwwenkaiscreen.css");
 /* Hark Cockpit · 暮色主题
    Dusk  #222A31  底色
    Ledge #1C2329  侧栏
@@ -7,19 +15,22 @@
    Haze  #97A1A8  次要文字
    Brass #D8B06A  你的焦点：选中、主要按钮
    Jade  #6CC4A1  在线：已登录 */
-:root{--dusk:#222A31;--ledge:#1C2329;--raise:#2C363F;--raise2:#34404A;--seam:#3A4550;--paper:#ECE6DB;--haze:#97A1A8;--dim:#6B767E;--brass:#D8B06A;--brass-ink:#2A2216;--jade:#6CC4A1;--rust:#E07A64}
+:root{--dusk:#222A31;--ledge:#1C2329;--raise:#2C363F;--raise2:#34404A;--seam:#3A4550;--paper:#ECE6DB;--haze:#97A1A8;--dim:#6B767E;--brass:#D8B06A;--brass-ink:#2A2216;--jade:#6CC4A1;--rust:#E07A64;
+--sans:"HarmonyOS Sans SC","Segoe UI Variable Text","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;
+--hand:"LXGW WenKai Screen","LXGW WenKai","KaiTi","STKaiti",var(--sans)}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
-body{font:13px/1.5 "Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;color:var(--paper);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+body{font:400 13px/1.55 var(--sans);color:var(--paper);font-feature-settings:"tnum" 1;letter-spacing:.1px;-webkit-font-smoothing:antialiased}
+.hand{font-family:var(--hand);font-weight:400;letter-spacing:.5px}
 button{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--brass);outline-offset:2px}
 ::-webkit-scrollbar{width:10px}::-webkit-scrollbar-thumb{background:rgba(236,230,219,.14);border-radius:10px;border:3px solid transparent;background-clip:content-box}::-webkit-scrollbar-thumb:hover{background-color:rgba(236,230,219,.26)}
-.mono-av{display:grid;place-items:center;border-radius:9px;font-weight:600;flex:none}
+.mono-av{display:grid;place-items:center;border-radius:9px;font-weight:500;flex:none}
 .lamp{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:none}
 .lamp.on{background:var(--jade);box-shadow:0 0 0 3px rgba(108,196,161,.16),0 0 10px rgba(108,196,161,.55)}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--seam);background:var(--raise);cursor:pointer;white-space:nowrap}
 .btn:hover{background:var(--raise2)}
-.btn.pri{background:var(--brass);border-color:var(--brass);color:var(--brass-ink);font-weight:600}
+.btn.pri{background:var(--brass);border-color:var(--brass);color:var(--brass-ink);font-weight:500}
 .btn.pri:hover{background:#E3BE7E}
 .ib{width:32px;height:32px;border-radius:8px;border:0;background:transparent;color:var(--haze);display:grid;place-items:center;cursor:pointer}
 .ib:hover{background:var(--raise2);color:var(--paper)}
@@ -27,10 +38,10 @@ button{font:inherit;color:inherit}
 /* 对话框 */
 #dlg{position:fixed;inset:0;background:rgba(14,18,22,.55);display:none;align-items:center;justify-content:center;z-index:20}
 #dlg .box{background:var(--raise);border:1px solid var(--seam);border-radius:14px;width:min(320px,calc(100vw - 24px));padding:18px;box-shadow:0 24px 60px rgba(0,0,0,.45);animation:rise .16s ease-out}
-#dlg .t{font-size:14px;font-weight:600;margin-bottom:12px}
+#dlg .t{font:400 16px/1.4 var(--hand);margin-bottom:12px}
 #dlg input{width:100%;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--seam);background:var(--ledge);color:var(--paper);font:inherit}
 #dlg input:focus{outline:none;border-color:var(--brass)}
 #dlg .b{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
-#dlg .btn.danger{background:var(--rust);border-color:var(--rust);color:#2B1410;font-weight:600}
+#dlg .btn.danger{background:var(--rust);border-color:var(--rust);color:#2B1410;font-weight:500}
 @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
