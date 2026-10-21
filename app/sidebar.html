@@ -1,12 +1,13 @@
 <!doctype html><html lang="zh"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; script-src 'unsafe-inline'">
 <link rel="stylesheet" href="theme.css">
 <style>
 body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;user-select:none;border-right:1px solid #161C21}
 .brand{height:52px;flex:none;display:flex;align-items:center;gap:10px;padding:0 18px;-webkit-app-region:drag}
 .mark{width:26px;height:26px;border-radius:8px;background:var(--brass);display:grid;place-items:center}
-.brand b{font-size:14px;font-weight:600;letter-spacing:.2px}
-.brand span{color:var(--dim);font-weight:400;margin-left:4px}
+.brand b{font:400 18px/1 var(--hand);letter-spacing:.5px}
+.brand b{white-space:nowrap}
+.brand span{font:400 11px/1 var(--sans);color:var(--dim);margin-left:7px;letter-spacing:.2px}
 .nav{margin:6px 10px 2px;height:36px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:8px;border:0;background:transparent;color:var(--haze);cursor:pointer;width:calc(100% - 20px);text-align:left;position:relative}
 .nav:hover{background:var(--raise);color:var(--paper)}
 .nav.on{background:var(--raise);color:var(--paper)}
@@ -18,7 +19,7 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
 .acc.on{background:var(--raise)}
 .acc .mono-av{width:30px;height:30px;font-size:13px}
 .meta{flex:1;min-width:0}
-.meta b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta b{display:block;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .st{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim)}
 .st.ok{color:var(--jade)}
 .st .lamp{width:6px;height:6px}
@@ -40,7 +41,7 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
 #menu hr{border:0;border-top:1px solid var(--seam);margin:4px 2px}
 #menu .danger{color:var(--rust)}
 </style></head><body>
-<div class="brand"><div class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="#2A2216"><path d="M4 19c3.5-7 8-11.5 16-14-3 4-4.4 8.3-3.8 14.2C12.4 16.6 8.4 16.7 4 19z"/></svg></div><b>Hark<span>Cockpit</span></b></div>
+<div class="brand"><div class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="#2A2216"><path d="M4 19c3.5-7 8-11.5 16-14-3 4-4.4 8.3-3.8 14.2C12.4 16.6 8.4 16.7 4 19z"/></svg></div><b>Hark Tools<span>by Miracle AI</span></b></div>
 <button class="nav" id="homeBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>总览</button>
 <div class="sec"><span>账号</span><span id="cnt">0</span></div>
 <div id="list"></div>
