@@ -1,13 +1,17 @@
 <!doctype html><html lang="zh"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; script-src 'unsafe-inline'">
 <link rel="stylesheet" href="theme.css">
 <style>
 body{background:var(--dusk);overflow:auto}
 .wrap{max-width:980px;margin:0 auto;padding:40px 40px 56px}
 header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px}
-.hello{font-size:13px;color:var(--haze);margin-bottom:6px}
-h1{margin:0;font-size:30px;line-height:1.2;font-weight:600;letter-spacing:-.2px}
-.ver{margin-top:8px;color:var(--dim);font-size:12.5px}
+.hello{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.hello .pic{width:52px;height:52px;flex:none;animation:bob 4.5s ease-in-out infinite}
+.hello b{display:block;font:400 22px/1.2 var(--hand);letter-spacing:1px;color:var(--paper)}
+.hello span{display:block;margin-top:2px;font-size:12.5px;color:var(--haze)}
+@keyframes bob{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-3px) rotate(-3deg)}}
+h1{margin:0;font:400 34px/1.15 var(--hand);letter-spacing:1px}
+.ver{margin-top:10px;color:var(--dim);font-size:12.5px}
 /* 账号名册：一行一个账号，不是一堆卡片 */
 .roster{margin-top:32px;border:1px solid var(--seam);border-radius:14px;background:var(--ledge);overflow:hidden}
 .row{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(170px,230px) 52px auto;align-items:center;gap:16px;padding:14px 18px;border-top:1px solid var(--seam);animation:rise .32s ease-out both}
@@ -15,19 +19,19 @@ h1{margin:0;font-size:30px;line-height:1.2;font-weight:600;letter-spacing:-.2px}
 .row:hover{background:rgba(44,54,63,.45)}
 .row.cur{background:rgba(216,176,106,.06)}
 .row .mono-av{width:40px;height:40px;font-size:16px;border-radius:11px}
-.nm b{display:block;font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nm b{display:block;font-size:15px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nm small{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:12px}
 .nm small.ok{color:var(--jade)}
 .nm small .cur{color:var(--brass);margin-left:6px}
 .quota{display:grid;gap:7px}
 .q{display:grid;grid-template-columns:1fr auto;gap:3px 8px;font-size:11.5px;color:var(--haze)}
-.q em{font-style:normal;color:var(--paper);font-weight:600}
+.q em{font-style:normal;color:var(--paper);font-weight:500}
 .q .bar{grid-column:1/-1;height:4px;border-radius:4px;background:var(--seam);overflow:hidden}
 .q .bar i{display:block;height:100%;border-radius:4px;background:var(--jade)}
 .q.warn .bar i{background:var(--brass)}.q.hot .bar i{background:var(--rust)}.q.hot em{color:var(--rust)}
 .qmsg{font-size:12px;color:var(--dim)}
 .tip{margin-top:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;border-radius:12px;border:1px dashed rgba(216,176,106,.45);color:var(--haze);font-size:12.5px}
-.tip b{color:var(--paper);font-weight:600}
+.tip b{color:var(--paper);font-weight:500}
 .qhead{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin:22px 2px -18px;font-size:12px;color:var(--dim)}
 .qhead button{border:0;background:none;color:var(--brass);cursor:pointer;font-size:12px;padding:2px 4px}
 .state{display:flex;align-items:center;gap:8px;color:var(--haze)}
@@ -40,18 +44,18 @@ h1{margin:0;font-size:30px;line-height:1.2;font-weight:600;letter-spacing:-.2px}
 .empty .btn{margin-top:14px}
 /* 导入说明：真正的三步顺序 */
 .guide{margin-top:28px;display:grid;grid-template-columns:220px 1fr;gap:28px;padding:22px 24px;border-radius:14px;background:var(--raise)}
-.guide h2{margin:0 0 6px;font-size:15px;font-weight:600}
+.guide h2{margin:0 0 6px;font:400 19px/1.3 var(--hand);letter-spacing:.5px}
 .guide p{margin:0;color:var(--haze);font-size:12.5px}
 .guide ol{margin:0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(3,1fr);gap:20px;counter-reset:s}
 .guide li{counter-increment:s;position:relative;padding-top:30px;color:var(--haze);font-size:12.5px}
-.guide li::before{content:counter(s);position:absolute;top:0;left:0;width:22px;height:22px;border-radius:50%;border:1px solid var(--brass);color:var(--brass);display:grid;place-items:center;font-size:12px;font-weight:600}
-.guide li b{display:block;color:var(--paper);font-weight:600;margin-bottom:2px}
+.guide li::before{content:counter(s);position:absolute;top:0;left:0;width:22px;height:22px;border-radius:50%;border:1px solid var(--brass);color:var(--brass);display:grid;place-items:center;font-size:12px;font-weight:500}
+.guide li b{display:block;color:var(--paper);font-size:13.5px;font-weight:500;margin-bottom:3px}
 code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 5px;border-radius:4px}
 @media (max-width:860px){.wrap{padding:28px 20px}.row{grid-template-columns:40px minmax(0,1fr) auto;row-gap:8px}.row .key{display:none}.row .quota{grid-column:2/-1}.row .acts{grid-column:1/-1;justify-content:flex-end}.guide{grid-template-columns:1fr}.guide ol{grid-template-columns:1fr}}
 </style></head><body>
 <div class="wrap">
   <header>
-    <div><div class="hello" id="hello"></div><h1 id="headline">还没有账号</h1><div class="ver" id="ver"></div></div>
+    <div><div class="hello" id="hello"><svg class="pic" id="pic" viewBox="0 0 64 64" aria-hidden="true"></svg><div><b id="hiT"></b><span id="hiS"></span></div></div><h1 id="headline">还没有账号</h1><div class="ver" id="ver"></div></div>
     <button class="btn pri" id="addBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>添加账号</button>
   </header>
   <div id="qtip"></div>
@@ -78,7 +82,19 @@ function ask(title,def,cb,withInput=true,okText){dt.textContent=title;di.style.d
 let st={accounts:[],activeId:null},animated=false;
 const addAcc=()=>ask('给新账号起个名字','Hark '+(st.accounts.length+1),name=>cockpit.add({name}),true,'添加账号');
 addBtn.onclick=addAcc;
-const h=new Date().getHours();hello.textContent=h<5?'夜深了':h<11?'早上好':h<14?'中午好':h<18?'下午好':'晚上好';
+// 问候：按电脑本地时间分成五段，每段一张小插画
+const face=(y,c='#2A2216')=>`<circle cx="25" cy="${y}" r="2.2" fill="${c}"/><circle cx="39" cy="${y}" r="2.2" fill="${c}"/><path d="M27.5 ${y+6}q4.5 4 9 0" stroke="${c}" stroke-width="2.2" fill="none" stroke-linecap="round"/><ellipse cx="21" cy="${y+5}" rx="3" ry="1.8" fill="#E8907A" opacity=".75"/><ellipse cx="43" cy="${y+5}" rx="3" ry="1.8" fill="#E8907A" opacity=".75"/>`;
+const rays=(r1,r2,n=8)=>Array.from({length:n},(_,i)=>{const a=i/n*Math.PI*2,c=Math.cos(a),s=Math.sin(a);return `<line x1="${32+c*r1}" y1="${32+s*r1}" x2="${32+c*r2}" y2="${32+s*r2}"/>`}).join('');
+const SCENES={
+  morning:{t:'早上好',s:'新的一天，从哪个账号开始？',svg:`<path d="M6 48h52" stroke="#6B767E" stroke-width="2.4" stroke-linecap="round"/><clipPath id="hz"><rect width="64" height="47"/></clipPath><g clip-path="url(#hz)"><g stroke="#F2C46D" stroke-width="3" stroke-linecap="round">${rays(20,26,7)}</g><circle cx="32" cy="40" r="15" fill="#F2C46D"/></g><g transform="translate(0,8)">${face(30)}</g>`},
+  noon:{t:'中午好',s:'记得吃饭，聊天可以等等',svg:`<g stroke="#F2C46D" stroke-width="3" stroke-linecap="round">${rays(21,27)}</g><circle cx="32" cy="32" r="16" fill="#F2C46D"/>${face(30)}`},
+  afternoon:{t:'下午好',s:'来杯茶，接着忙',svg:`<g stroke="#F2C46D" stroke-width="2.6" stroke-linecap="round" transform="translate(-6,-6)">${rays(15,20)}</g><circle cx="26" cy="26" r="12" fill="#F2C46D"/><path d="M18 50a9 9 0 0 1 3-17.5 12 12 0 0 1 22.5-2A8.5 8.5 0 0 1 50 50z" fill="#C9D6DF"/><g transform="translate(9,12)">${face(28,'#3A4550')}</g>`},
+  evening:{t:'晚上好',s:'今天辛苦了',svg:`<path d="M42 10a22 22 0 1 0 12 30A18 18 0 0 1 42 10z" fill="#E9DFC4"/><g transform="translate(-4,4)">${face(32,'#3A4550')}</g><path d="M50 12l1.4 3 3 1.4-3 1.4-1.4 3-1.4-3-3-1.4 3-1.4z" fill="#D8B06A"/><circle cx="57" cy="28" r="1.6" fill="#D8B06A"/>`},
+  night:{t:'夜深了',s:'别熬太晚，明天再聊也行',svg:`<path d="M40 12a20 20 0 1 0 12 28A16 16 0 0 1 40 12z" fill="#E9DFC4"/><g transform="translate(-6,6)"><path d="M21.5 30q3 2.5 6 0M35.5 30q3 2.5 6 0" stroke="#3A4550" stroke-width="2.2" fill="none" stroke-linecap="round"/><circle cx="31.5" cy="37" r="2" fill="#3A4550"/></g><text x="44" y="18" font-size="10" font-weight="700" fill="#97A1A8" font-family="sans-serif">z</text><text x="51" y="10" font-size="7" font-weight="700" fill="#6B767E" font-family="sans-serif">z</text>`}
+};
+function greet(){const h=new Date().getHours();const k=h<5||h>=23?'night':h<11?'morning':h<14?'noon':h<18?'afternoon':'evening';
+  if(greet.k===k)return;greet.k=k;const g=SCENES[k];pic.innerHTML=g.svg;hiT.textContent=g.t;hiS.textContent=g.s;}
+greet();setInterval(greet,60000);
 const fmtN=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e4?(n/1e3).toFixed(0)+'K':String(Math.round(n));
 const fmtT=t=>{const d=new Date(t);return isNaN(d)?String(t):`${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`};
 function quota(a){
@@ -124,5 +140,5 @@ function render(){
 }
 cockpit.onState(s=>{st=s;render()});
 cockpit.getState().then(s=>{st=s;render()});
-cockpit.version().then(v=>ver.textContent='Hark Cockpit v'+v+'，按 Ctrl 1–9 直接切换账号');
+cockpit.version().then(v=>ver.textContent='Hark Tools v'+v+'，按 Ctrl 1–9 直接切换账号');
 </script></body></html>
