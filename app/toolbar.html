@@ -10,12 +10,15 @@ button{-webkit-app-region:no-drag}
 .title span{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
 .title span.ok{color:var(--jade)}
 .sp{flex:1}
+#upd{display:none;height:30px;padding:0 12px;border-radius:8px;border:0;background:var(--brass);color:var(--brass-ink);font-weight:600;cursor:pointer;animation:rise .2s ease-out}
+#upd:hover{background:#E3BE7E}
 </style></head><body>
 <button class="ib" id="back" title="后退" aria-label="后退"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
 <button class="ib" id="fwd" title="前进" aria-label="前进"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
 <button class="ib" id="rl" title="刷新页面" aria-label="刷新页面"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></button>
 <div class="title"><b id="tt">总览</b><span id="ts"></span></div>
 <div class="sp"></div>
+<button id="upd" title="重启后使用新版本"></button>
 <script>
 let st={};
 function render(){
@@ -27,5 +30,6 @@ function render(){
   ts.className=!home&&a.loggedIn?'ok':'';
 }
 back.onclick=()=>cockpit.nav('back');fwd.onclick=()=>cockpit.nav('forward');rl.onclick=()=>st.activeId&&cockpit.reload(st.activeId);
+cockpit.onUpdate(u=>{if(u.state==='ready'){upd.textContent=`新版本 v${u.version} 已下载，重启更新`;upd.style.display='block';upd.onclick=()=>cockpit.installUpdate();}});
 cockpit.onState(s=>{st=s;render()});cockpit.getState().then(s=>{st=s;render()});
 </script></body></html>
