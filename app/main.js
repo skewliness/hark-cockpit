@@ -518,9 +518,18 @@ let scanRound = 0, mailSaveT;
 function mailSave() { clearTimeout(mailSaveT); mailSaveT = setTimeout(() => { mail.letters = mail.letters.slice(-200); mail.seen = mail.seen.slice(-2000); try { fs.writeFileSync(mailStore, JSON.stringify(mail)); } catch {} }, 300); }
 function hashOf(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length.toString(36); }
 const norm = s => String(s).replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
-function accLabel(a) { const i = accounts.indexOf(a); return `窗口${i + 1}「${a.name}」`; }
+// 每个窗口一个信箱地址（如 #KQZM）：由 Hark Tools 分配，全局唯一，改名、调顺序都不变；身份以「信是从哪个窗口里发出的」为准，agent 无法冒充
+const ADDR_CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+function mailAddr(a) {
+  if (a.mail && !accounts.some(x => x !== a && x.mail === a.mail)) return a.mail;
+  let code; do { code = '#' + Array.from({ length: 4 }, () => ADDR_CH[Math.floor(Math.random() * ADDR_CH.length)]).join(''); } while (accounts.some(x => x.mail === code));
+  a.mail = code; save(); return code;
+}
+function accLabel(a) { const i = accounts.indexOf(a); return `窗口${i + 1}「${a.name}」${mailAddr(a)}`; }
+function directory(me) { return accounts.map((a, i) => `${mailAddr(a)} 窗口${i + 1}「${a.name}」${me && a.id === me.id ? '（就是你）' : ''}`).join('\n'); }
 function resolveTo(raw) {
   const t = String(raw).trim().replace(/^["'「『]|["'」』]$/g, '').trim();
+  const am = /#([A-Z]{4})\b/i.exec(t); if (am) { const hit = accounts.find(a => mailAddr(a) === '#' + am[1].toUpperCase()); if (hit) return hit; }
   const m = /^(?:窗口|window\s*|#)?\s*(\d+)$/i.exec(t);
   if (m) return accounts[+m[1] - 1] || null;
   return accounts.find(a => a.name === t) || accounts.find(a => a.name.toLowerCase() === t.toLowerCase()) ||
@@ -529,8 +538,24 @@ function resolveTo(raw) {
 const SCAN_JS = `(() => { const t = document.body ? document.body.innerText : ''; const out = [];
   const re = /\\[\\[\\s*MAIL\\s+to\\s*[=:：]\\s*([^\\]\\n]+?)\\s*\\]\\]([\\s\\S]*?)\\[\\[\\s*\\/\\s*MAIL\\s*\\]\\]/gi; let m;
   while ((m = re.exec(t))) out.push([m[1], m[2]]); return out; })()`;
+// 自动学会信箱：每个已登录窗口（包括以后新加的）第一次准备好时，自动收到一份信箱说明，只发一次
+function autoTeach() {
+  mail.taught = mail.taught || {};
+  for (const a of accounts) {
+    if (!loginState[a.id] || mail.taught[a.id]) continue;
+    if (!/^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL)) continue; // 只给 Hark 窗口发说明
+    if (mail.letters.some(x => x.teach && x.to === a.id && (x.status === 'queued' || x.status === 'sent'))) { mail.taught[a.id] = Date.now(); continue; }
+    if (!views.has(a.id)) getView(a); // 后台加载，不切换你当前的窗口
+    const wc = views.get(a.id).webContents;
+    if (wc.isLoading() || !/^https:\/\/app\.hark\.com/.test(wc.getURL())) continue;
+    mail.taught[a.id] = Date.now();
+    mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明', body: '', status: 'queued', note: '', teach: true, auto: true });
+    mailSave(); pushState(); deliverQueue();
+  }
+}
 async function scanMail() {
   scanRound++;
+  autoTeach();
   for (const a of accounts) {
     const v = views.get(a.id);
     if (!v || v.webContents.isDestroyed() || v.webContents.isLoading() || !/^https:\/\/app\.hark\.com/.test(v.webContents.getURL())) continue;
@@ -576,7 +601,7 @@ function letterText(L) {
   const att = (L.files || []).length ? `\n\n📎 附件（已随这条消息上传）：${L.files.map(f => f.name).join('、')}` : '';
   const miss = (L.missing || []).length ? `\n⚠️ 没取到的附件：${L.missing.join('、')}，需要的话请对方重新发。` : '';
   return `📨 信箱来信｜来自 ${from ? accLabel(from) : L.fromName}${L.subject ? '｜主题：' + L.subject : ''}\n\n${L.body}${att}${miss}\n\n——\n` +
-    `（这是 Hark Tools 信箱从另一个窗口的 agent 转来的信。回信请放进一个代码块，格式：\n[[MAIL to=${from ? from.name : L.fromName}]]\n主题: …\n附件: 文件名（可选，文件作为附件放在同一条回复里）\n${PLACEHOLDER}\n[[/MAIL]]\nHark Tools 会自动送达。讨论有结论后，由发起讨论的一方告诉用户。）`;
+    `（这是 Hark Tools 信箱从另一个窗口的 agent 转来的信。回信请放进一个代码块，格式：\n[[MAIL to=${from ? mailAddr(from) : L.fromName}]]\n主题: …\n附件: 文件名（可选，文件作为附件放在同一条回复里）\n${PLACEHOLDER}\n[[/MAIL]]\nHark Tools 会自动送达。讨论有结论后，由发起讨论的一方告诉用户。\n当前通讯录：\n${directory(accounts.find(a => a.id === L.to))}）`;
 }
 const COMPOSER_JS = text => `(async () => {
   const vis = e => { const r = e.getBoundingClientRect(); return r.width > 40 && r.height > 10 && getComputedStyle(e).visibility !== 'hidden'; };
@@ -615,7 +640,7 @@ async function deliverQueue() {
         if (!wc.isLoading() && /^https:\/\/app\.hark\.com/.test(wc.getURL())) { try { r = await wc.executeJavaScript(COMPOSER_JS(L.teach ? protocolText(acc) : letterText(L)), true); } catch { r = 'no-composer'; } }
         if (r === 'no-composer') await new Promise(res => setTimeout(res, 2500));
       }
-      if (r === 'no-composer') { L.status = 'failed'; L.note = loginState[acc.id] ? '没找到输入框' : '收件窗口未登录'; }
+      if (r === 'no-composer') { L.status = 'failed'; L.note = loginState[acc.id] ? '没找到输入框' : '收件窗口未登录'; if (L.teach && mail.taught) { L.tries = (L.tries || 0) + 1; if (L.tries < 3) delete mail.taught[acc.id]; } }
       else { L.status = 'sent'; L.sentAt = Date.now(); toast(`信箱：${L.fromName} → ${acc.name}${L.subject ? '「' + L.subject + '」' : ''}`); }
       mailSave(); pushState();
       await new Promise(res => setTimeout(res, 1500));
@@ -677,8 +702,7 @@ async function uploadFiles(wc, paths) {
 }
 ipcMain.handle('mailFiles', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.files && L.files[0]) shell.showItemInFolder(L.files[0].path); });
 function protocolText(acc) {
-  const list = accounts.map((a, i) => `窗口${i + 1}「${a.name}」${a.id === acc.id ? '（就是你）' : ''}`).join('、');
-  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口：${list}。当我让你去和另一个窗口讨论，或你需要别的窗口配合时，用写信的方式联系它：把信放进一个代码块发出，格式如下——\n\n[[MAIL to=窗口名或编号]]\n主题: 一句话主题\n${PLACEHOLDER}（文字、方案、代码都可以直接写在这里）\n[[/MAIL]]\n\nHark Tools 会自动把信送到对方窗口，对方也会用同样的格式回信给你。一封信一个代码块；正文里如果要放代码，直接写，不要再嵌套代码块。内容很长（大段代码、整个文件、多个文件）时，别塞进正文：把它存成文件（txt、md、源码文件、zip 压缩包等任意格式都行），作为附件放在写信的同一条回复里，并在信里加一行「附件: 文件名1, 文件名2」，Hark Tools 会把文件一起送过去。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」，不用写信。`;
+  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，每个窗口有唯一的信箱地址，你的地址是 ${mailAddr(acc)}。通讯录：\n${directory(acc)}\n\n当我让你去和另一个窗口讨论，或你需要别的窗口配合时，用写信的方式联系它：把信放进一个代码块发出，格式如下——\n\n[[MAIL to=对方的信箱地址，例如 #ABCD]]\n主题: 一句话主题\n${PLACEHOLDER}（文字、方案、代码都可以直接写在这里）\n[[/MAIL]]\n\nHark Tools 会自动把信送到对方窗口，对方也会用同样的格式回信给你。一封信一个代码块；正文里如果要放代码，直接写，不要再嵌套代码块。内容很长（大段代码、整个文件、多个文件）时，别塞进正文：把它存成文件（txt、md、源码文件、zip 压缩包等任意格式都行），作为附件放在写信的同一条回复里，并在信里加一行「附件: 文件名1, 文件名2」，Hark Tools 会把文件一起送过去。收件人优先写信箱地址（窗口改名或调顺序时地址不变），也可以写窗口名或编号。你的身份由 Hark Tools 按发信窗口自动标注，不用自己署名。新窗口加入时，你收到的来信末尾会附最新通讯录。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」，不用写信。`;
 }
 ipcMain.handle('mailPause', (_e, on) => { mail.paused = !!on; if (!on) mail.letters.filter(x => x.status === 'held').forEach(x => { x.status = 'queued'; x.note = ''; }); mailSave(); pushState(); deliverQueue(); });
 ipcMain.handle('mailRetry', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.to) { L.status = 'queued'; L.note = ''; L.at = Date.now(); mailSave(); pushState(); deliverQueue(); } });
@@ -686,13 +710,37 @@ ipcMain.handle('mailClear', () => { mail.letters = mail.letters.filter(x => x.st
 ipcMain.handle('mailTeach', async (_e, id) => {
   const targets = id ? accounts.filter(a => a.id === id) : accounts.filter(a => loginState[a.id]);
   for (const a of targets) {
+    mail.taught = mail.taught || {}; mail.taught[a.id] = Date.now();
     const L = { id: 'p' + Date.now().toString(36) + a.id.slice(0, 3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明', body: '', status: 'queued', note: '', teach: true };
     mail.letters.push(L);
   }
   mailSave(); pushState(); deliverQueue();
 });
-function mailSnapshot() { return { paused: mail.paused, letters: mail.letters.slice(-40).map(({ body, files, ...x }) => ({ ...x, nfiles: (files || []).length, fileNames: (files || []).map(f => f.name), preview: String(body).slice(0, 140) })) }; }
+function mailSnapshot() { return { paused: mail.paused, addrs: Object.fromEntries(accounts.map(a => [a.id, mailAddr(a)])), taught: mail.taught || {}, letters: mail.letters.slice(-40).map(({ body, files, ...x }) => ({ ...x, nfiles: (files || []).length, fileNames: (files || []).map(f => f.name), preview: String(body).slice(0, 140) })) }; }
 app.whenReady().then(() => setInterval(() => { scanMail().catch(() => {}); }, 3000));
+
+
+// 更新公告：changelog.json 随每次发版更新；顶栏有 NEW 标记，点开在总览里看
+const prefsFile = path.join(app.getPath('userData'), 'prefs.json');
+let prefs = {}; try { prefs = JSON.parse(fs.readFileSync(prefsFile, 'utf8')); } catch {}
+const savePrefs = () => { try { fs.writeFileSync(prefsFile, JSON.stringify(prefs)); } catch {} };
+const verCmp = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0); } return 0; };
+let notesCache = null;
+async function loadNotes() {
+  let list = []; try { list = JSON.parse(fs.readFileSync(path.join(__dirname, 'changelog.json'), 'utf8')); } catch {}
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
+    const r = await (require('electron').net.fetch)('https://raw.githubusercontent.com/skewliness/hark-cockpit/main/app/changelog.json?t=' + Date.now(), { signal: ctl.signal });
+    clearTimeout(t); if (r.ok) { const remote = await r.json(); const seen = new Set(remote.map(x => x.version)); list = [...remote, ...list.filter(x => !seen.has(x.version))]; }
+  } catch {}
+  list.sort((a, b) => verCmp(b.version, a.version));
+  notesCache = list; return list;
+}
+function notesState() { const list = notesCache || []; const latest = list[0] ? list[0].version : null; return { list, latest, unread: !!latest && verCmp(latest, prefs.notesSeen || '0.0.0') > 0, running: boot.version || app.getVersion() }; }
+function pushNotes() { const s = notesState(); for (const x of [toolbar, home]) x?.webContents.send('notes', s); }
+ipcMain.handle('notes', async () => { if (!notesCache) await loadNotes(); return notesState(); });
+ipcMain.handle('openNotes', async () => { if (!notesCache) await loadNotes(); showOverview(); home?.webContents.send('openNotes'); const s = notesState(); if (s.latest) { prefs.notesSeen = s.latest; savePrefs(); } pushNotes(); });
+app.whenReady().then(() => { setTimeout(() => loadNotes().then(pushNotes), 5000); setInterval(() => loadNotes().then(pushNotes), 30 * 60 * 1000); });
 
 // 远程更新：由 bootstrap.js 从 GitHub 拉取新版界面/逻辑代码，点击后重启生效
 const boot = global.__cockpitBoot || {};
@@ -701,7 +749,7 @@ function setupUpdater() {
   if (process.platform === 'win32') app.setAppUserModelId('com.hark.cockpit');
   let notified = null;
   const ready = (v) => {
-    send({ state: 'ready', version: v });
+    send({ state: 'ready', version: v }); loadNotes().then(pushNotes);
     if (notified === v) return; notified = v;
     try {
       const { Notification } = require('electron');
