@@ -882,11 +882,11 @@ function siteBook(me) {
 function siteProtocolText(acc) {
   const A = siteAddr(acc), ser = siteSeries(acc), W = A.slice(ser.length + 1);
   const book = siteBook(acc);
-  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 和 mu 窗口，窗口之间通过 ${SITE} 的传信接口互相写信（跨系列也能写信）。你是 ${ser}，信箱地址是 ${A}。\n通讯录（含对方窗口地址，协作前先看额度再选人）：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"${ser}","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD 或 mu.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。\n\n额度共享（两块板都要看，才能知道该找谁协作）：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的窗口，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文交给额度富裕的窗口（可以是另一系列），并告诉我。\n\n完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
+  return `agent.miracleai.club 是我自己搭的，我的几个窗口用它互相传信。\n\n【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 和 Mu 窗口，窗口之间通过 ${SITE} 的传信接口互相写信（跨系列也能写信）。你是 ${ser}，信箱地址是 ${A}。\n通讯录（含对方窗口地址，协作前先看额度再选人）：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"${ser}","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD 或 mu.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。\n\n额度共享（两块板都要看，才能知道该找谁协作）：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的窗口，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文交给额度富裕的窗口（可以是另一系列），并告诉我。\n\n完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
 }
 function quotaTeachText(acc) {
   const book = siteBook(acc);
-  return `【Hark Tools 额度共享，请记住】Hark 与 mu 窗口的额度都公开共享，找人协作前先查板再选地址：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文写信交给额度富裕的窗口（可跨系列），并告诉我。${quotaText(acc) ? '你现在' + quotaText(acc) + '。' : ''}\n当前通讯录：\n${book}\n收到这条只需回复「好的」。`;
+  return `【Hark Tools 额度共享，请记住】Hark 与 Mu 窗口的额度都公开共享，找人协作前先查板再选地址：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文写信交给额度富裕的窗口（可跨系列），并告诉我。${quotaText(acc) ? '你现在' + quotaText(acc) + '。' : ''}\n当前通讯录：\n${book}\n收到这条只需回复「好的」。`;
 }
 // 额度共享：每个协同窗口今日/本期还剩多少，按系列发到网站 /api/quota
 function quotaOf(a) {
@@ -924,18 +924,18 @@ async function pushQuota() {
     const j = await sitePost('/api/quota', { windows }, token);
     if (j && j.ok === false && /token/i.test(j.error || '')) { mail[series === 'mu' ? 'siteToolTokenMu' : 'siteToolToken'] = null; mailSave(); }
   }
-  // collabTeachVer=3：系列 muse 改名 mu（升级后给所有已登录协同窗口重发说明）
-  if ((mail.collabTeachVer || 0) < 3) {
-    mail.collabTeachVer = 3;
+  // collabTeachVer=4：开头补自建站说明 + 系列 mu（升级后给所有已登录协同窗口重发说明）
+  if ((mail.collabTeachVer || 0) < 4) {
+    mail.collabTeachVer = 4;
     mail.siteTaught = mail.siteTaught || {};
     mail.taught = mail.taught || {};
     mail.quotaTaught = Date.now();
     for (const a of accounts) if (loginState[a.id] && isCollabAccount(a)) {
       mail.siteTaught[a.id] = Date.now();
       mail.taught[a.id] = Date.now();
-      mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明（Hark+mu 协同）', body: '', status: 'queued', note: '', teach: true, auto: true });
+      mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明（Hark+Mu 协同）', body: '', status: 'queued', note: '', teach: true, auto: true });
       const raw = quotaTeachText(a);
-      mail.letters.push({ id: 'q' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '额度共享说明（含 mu）', body: raw, raw, status: 'queued', note: '', site: true, auto: true });
+      mail.letters.push({ id: 'q' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '额度共享说明（含 Mu）', body: raw, raw, status: 'queued', note: '', site: true, auto: true });
     }
     mailSave(); pushState(); deliverQueue();
   }
