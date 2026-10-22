@@ -1,4 +1,4 @@
-﻿// Hark Cockpit: 每个 Hark 账号一个独立的持久化会话（cookie/登录态互不干扰），侧栏一键切换。
+// Hark Cockpit: 每个 Hark 账号一个独立的持久化会话（cookie/登录态互不干扰），侧栏一键切换。
 const { app, BaseWindow, WebContentsView, ipcMain, session, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -7,37 +7,18 @@ const http = require('http');
 const SIDEBAR_W = 264;
 const TOOLBAR_H = 52;
 const DEFAULT_URL = 'https://app.hark.com';
-const MUSE_URL = 'https://muse.ai';
-const URLS = { hark: DEFAULT_URL, muse: MUSE_URL };
-
-function normalizeKind(kind, url) {
-  const k = String(kind || '').toLowerCase();
-  if (k === 'muse' || k === 'hark') return k;
-  if (url && /muse\.ai/i.test(String(url))) return 'muse';
-  return 'hark';
-}
-function urlForKind(kind) { return URLS[normalizeKind(kind)] || DEFAULT_URL; }
-function isMuseAccount(a) { return normalizeKind(a && a.kind, a && a.url) === 'muse'; }
-
 // 去掉 Electron 标识，降低 Google 登录拦截“此浏览器不安全”的概率
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 const store = path.join(app.getPath('userData'), 'accounts.json');
-let accounts = [];      // [{id, name, url, kind:'hark'|'muse'}]
+let accounts = [];      // [{id, name, url}]
 let activeId = null;
 const views = new Map(); // id -> WebContentsView
 let win, sidebar, home, toolbar;
 let showHome = false;
 
 function load() {
-  try {
-    const d = JSON.parse(fs.readFileSync(store, 'utf8'));
-    accounts = (d.accounts || []).map(a => {
-      const kind = normalizeKind(a.kind, a.url);
-      return { ...a, kind, url: a.url || urlForKind(kind) };
-    });
-    activeId = d.activeId;
-  } catch { accounts = []; }
+  try { const d = JSON.parse(fs.readFileSync(store, 'utf8')); accounts = d.accounts || []; activeId = d.activeId; } catch { accounts = []; }
 }
 function save() { fs.writeFileSync(store, JSON.stringify({ accounts, activeId }, null, 2)); }
 
@@ -67,7 +48,8 @@ function getView(acc) {
   hookKeys(v.webContents);
   // Google OAuth 等弹窗留在同一会话内，其他外链用系统浏览器打开
   v.webContents.setWindowOpenHandler(({ url }) => {
-    if (/accounts\.google\.com|hark\.com|muse\.ai|auth\.muse\.ai|auth\.meta\.com|accountscenter\.meta\.com|facebook\.com|instagram\.com|appleid\.apple\.com|login\.microsoftonline\.com/.test(url)) {
+    if (dlWait.has(acc.id)) { v.webContents.downloadURL(url); return { action: 'deny' }; } // 信箱正在取附件
+    if (/accounts\.google\.com|hark\.com|appleid\.apple\.com|login\.microsoftonline\.com/.test(url)) {
       return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, webPreferences: { partition: partitionOf(acc.id) } } };
     }
     shell.openExternal(url);
@@ -77,7 +59,8 @@ function getView(acc) {
   v.webContents.on('did-finish-load', () => pushState());
   v.webContents.on('did-navigate-in-page', () => pushState());
   watchUsage(acc, v.webContents);
-  v.webContents.loadURL(acc.url || urlForKind(acc.kind));
+  hookDownloads(acc, v.webContents);
+  v.webContents.loadURL(acc.url || DEFAULT_URL);
   views.set(acc.id, v);
   return v;
 }
@@ -103,35 +86,17 @@ function activate(id) {
 
 function showOverview() { showHome = true; layout(); pushState(); home?.webContents.focus(); }
 
-// 登录状态：Hark 看 hark.com session；Muse 看 muse.ai 的 hatch_* 会话 cookie
+// 登录状态：分区里存在 hark.com 的 session cookie 即视为已登录
 const loginState = {};
-// Muse 登录凭证：分区里 .muse.ai 的 hatch_sess / hatch_gw / hatch_vml / hatch_native_auth_device
-// （实测登录后一定有 hatch_sess；仅匹配 session|sess 在部分部署会漏判）
-function isMuseLoginCookie(c) {
-  const host = String(c.domain || '').replace(/^\./, '');
-  if (!/(^|\.)muse\.ai$/.test(host)) return false;
-  const n = String(c.name || '');
-  if (/^(hatch_sess|hatch_gw|hatch_vml|hatch_native_auth_device)$/i.test(n)) return true;
-  // 其它 hatch_* 业务 cookie；排除 Meta/CF 噪音
-  if (/^hatch_/i.test(n) && !/^(hatch_cf|hatch_theme)/i.test(n)) return true;
-  return false;
-}
 async function refreshStatus() {
   await Promise.all(accounts.map(async a => {
     try {
       const cs = await session.fromPartition(partitionOf(a.id)).cookies.get({});
-      if (isMuseAccount(a)) {
-        loginState[a.id] = cs.some(isMuseLoginCookie);
-      } else {
-        loginState[a.id] = cs.some(c => {
-          const host = c.domain.replace(/^\./, '');
-          return /(^|\.)hark\.com$/.test(host) && /session/i.test(c.name);
-        });
-      }
+      loginState[a.id] = cs.some(c => /(^|\.)hark\.com$/.test(c.domain.replace(/^\./, '')) && /session/i.test(c.name));
     } catch { loginState[a.id] = false; }
   }));
 }
-function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], usage: usage[a.id] || null, kind: normalizeKind(a.kind, a.url) })), activeId, showHome, usageReady: !!usageCfg.url || accounts.some(a => isMuseAccount(a) && loginState[a.id]) }; }
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], usage: usage[a.id] || null })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
 let pushT;
 function pushState() {
   clearTimeout(pushT);
@@ -145,14 +110,8 @@ function pushState() {
   }, 60);
 }
 
-ipcMain.handle('add', (_e, { name, url, kind }) => {
-  const k = normalizeKind(kind, url);
-  const acc = {
-    id: Date.now().toString(36),
-    name: name || `${k === 'muse' ? 'Muse' : 'Hark'} ${accounts.filter(a => normalizeKind(a.kind, a.url) === k).length + 1}`,
-    url: url || urlForKind(k),
-    kind: k,
-  };
+ipcMain.handle('add', (_e, { name, url }) => {
+  const acc = { id: Date.now().toString(36), name: name || `Hark ${accounts.length + 1}`, url: url || DEFAULT_URL };
   accounts.push(acc); save(); activate(acc.id); return acc;
 });
 ipcMain.handle('switch', (_e, id) => activate(id));
@@ -259,7 +218,6 @@ function parseUsage(obj) {
 }
 const SKIP_HEADERS = /^(cookie|host|content-length|accept-encoding|connection|origin|referer|sec-|user-agent|:)/i;
 function watchUsage(acc, wc) {
-  if (isMuseAccount(acc)) return;
   try { wc.debugger.attach('1.3'); } catch { return; }
   const reqs = new Map();
   wc.debugger.sendCommand('Network.enable').catch(() => {});
@@ -328,172 +286,9 @@ async function fetchUsage(acc) {
   } catch (e) { usage[acc.id] = { ...(usage[acc.id] || {}), error: '网络错误' }; }
 }
 let polling = false;
-// ===== Muse 额度：Settings → 通用 → 使用情况（Next.js server action，非公开 REST）=====
-// POST https://muse.ai/  + header next-action=<deploy-specific id>
-// body: [{"includeAgreement":true}]  → RSC flight 行里 subscription.usage.percentUsed / topup*
-const museUsageStore = path.join(app.getPath('userData'), 'muse-usage.json');
-const MUSE_ACTION_KNOWN = '4029ac5c4bd03136487d91ebde5de39c64b35229b4';
-let museActionId = null;
-try { museActionId = JSON.parse(fs.readFileSync(museUsageStore, 'utf8')).actionID || null; } catch {}
-function saveMuseAction(id) {
-  museActionId = id || null;
-  try { fs.writeFileSync(museUsageStore, JSON.stringify({ actionID: museActionId, at: Date.now() }, null, 2)); } catch {}
-}
-function museChunkPaths(text) {
-  return [...new Set((String(text).match(/static\/chunks\/[\w~.-]+\.js/g) || []).map(p => '/_next/' + p))];
-}
-async function museGet(ses, url, headers = {}) {
-  const res = await ses.fetch(url, { headers: { 'user-agent': UA, ...headers }, credentials: 'include' });
-  const text = await res.text();
-  return { status: res.status, text, url: res.url };
-}
-async function discoverMuseAction(ses) {
-  const page = await museGet(ses, MUSE_URL + '/', { accept: 'text/html' });
-  if (page.status === 401 || page.status === 403 || /auth\.muse\.ai/i.test(page.url || '')) return null;
-  if (page.status !== 200) throw new Error('muse page ' + page.status);
-  const paths = museChunkPaths(page.text).slice(0, 96);
-  let text = '';
-  for (let i = 0; i < paths.length; i += 8) {
-    const batch = paths.slice(i, i + 8);
-    const bodies = await Promise.all(batch.map(p => museGet(ses, MUSE_URL + p, { accept: '*/*' }).then(r => r.status === 200 ? r.text : '').catch(() => '')));
-    text += '\n' + bodies.join('\n');
-    const module = /\.A\((\d+)\)\.then\(\(\{[^}]*Settings/.exec(text)?.[1];
-    if (!module) continue;
-    const loader = new RegExp(`[,{\\[]${module},\\w+=>\\{\\w+\\.v\\(\\w+=>Promise\\.all\\(\\[([^\\]]*)`).exec(text);
-    if (!loader) continue;
-    const settingsPaths = museChunkPaths(loader[1]).slice(0, 32);
-    for (let j = 0; j < settingsPaths.length; j += 8) {
-      const sb = await Promise.all(settingsPaths.slice(j, j + 8).map(p => museGet(ses, MUSE_URL + p, { accept: '*/*' }).then(r => r.status === 200 ? r.text : '').catch(() => '')));
-      for (const body of sb) {
-        const id = /"([0-9a-f]{40,})",[^"]{0,200}"fetchSubscriptionAction"/.exec(body)?.[1];
-        if (id) return id;
-      }
-    }
-    break;
-  }
-  const fallback = /"([0-9a-f]{40,})",[^"]{0,200}"fetchSubscriptionAction"/.exec(text)?.[1];
-  return fallback || null;
-}
-async function postMuseSubscription(ses, actionID) {
-  const res = await ses.fetch(MUSE_URL + '/', {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'user-agent': UA,
-      accept: 'text/x-component',
-      'content-type': 'text/plain;charset=UTF-8',
-      'next-action': actionID,
-      origin: MUSE_URL,
-      'sec-fetch-site': 'same-origin',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-dest': 'empty',
-    },
-    body: JSON.stringify([{ includeAgreement: true }]),
-  });
-  const text = await res.text();
-  return { status: res.status, text };
-}
-function parseMuseFlight(bodyText) {
-  let sub = null;
-  for (const line of String(bodyText).split('\n')) {
-    try {
-      const m = /^[0-9a-f]+:(\{.*\})\s*$/.exec(line);
-      if (!m) continue;
-      const row = JSON.parse(m[1]);
-      if (row && row.success === true && row.subscription) sub = row.subscription;
-    } catch {}
-  }
-  return sub;
-}
-function tokensLeftNote(label) {
-  const m = /\(([^()]*词元[^()]*)\)|\(([^()]+ tokens left)\)/i.exec(label || '');
-  return (m && (m[1] || m[2])) || null;
-}
-function pctFromLabel(label) {
-  const m = /已使用\s*([\d.]+)\s*%|([\d.]+)\s*%\s*used/i.exec(label || '');
-  return m ? num(m[1] || m[2]) : null;
-}
-function museBuckets(sub) {
-  const buckets = [];
-  const u = sub.usage || {};
-  const pct = num(u.percentUsed);
-  const resetsSec = num(u.resetsAt);
-  buckets.push({
-    key: 'weekly',
-    label: sub.usageRowLabel || sub.tier?.name || '免费版',
-    pct: pct == null ? 0 : Math.max(0, Math.min(100, pct)),
-    used: null,
-    limit: null,
-    resets: resetsSec != null ? resetsSec * 1000 : null,
-    note: sub.usageRowValueLabel || (pct != null ? `已使用 ${pct}%` : null),
-  });
-  const bal = num(sub.topupBalance), tot = num(sub.topupTotal);
-  if (tot != null && tot > 0) {
-    let tp = pctFromLabel(sub.topupRowValueLabel);
-    if (tp == null && bal != null) tp = Math.max(0, Math.min(100, Math.round((tot - bal) / tot * 1000) / 10));
-    buckets.push({
-      key: 'topup',
-      label: sub.topupRowLabel || '额外额度',
-      pct: tp == null ? 0 : tp,
-      used: null,
-      limit: null,
-      resets: null,
-      note: tokensLeftNote(sub.topupRowValueLabel) || sub.topupRowValueLabel || null,
-    });
-  }
-  return buckets;
-}
-async function fetchMuseUsage(acc) {
-  try {
-    const ses = session.fromPartition(partitionOf(acc.id));
-    let actionID = museActionId || MUSE_ACTION_KNOWN;
-    let res = actionID ? await postMuseSubscription(ses, actionID) : null;
-    const stale = res && res.status === 404 && /server action not found/i.test(res.text);
-    const signedOut = res && (res.status === 401 || res.status === 403 || /auth\.muse\.ai/i.test(res.text));
-    if (!res || stale || signedOut) {
-      if (stale) saveMuseAction(null);
-      actionID = await discoverMuseAction(ses);
-      if (!actionID) {
-        usage[acc.id] = { at: Date.now(), buckets: [], error: signedOut ? '未登录' : '找不到额度接口' };
-        return;
-      }
-      res = await postMuseSubscription(ses, actionID);
-      if (res.status === 404 && /server action not found/i.test(res.text)) {
-        usage[acc.id] = { at: Date.now(), buckets: [], error: '额度接口已变更' };
-        return;
-      }
-    }
-    if (res.status === 401 || res.status === 403) {
-      usage[acc.id] = { at: Date.now(), buckets: [], error: '未登录' };
-      return;
-    }
-    if (res.status !== 200) {
-      usage[acc.id] = { ...(usage[acc.id] || {}), error: '读取失败 ' + res.status };
-      return;
-    }
-    const sub = parseMuseFlight(res.text);
-    if (!sub || typeof sub.usage?.percentUsed !== 'number') {
-      usage[acc.id] = { at: Date.now(), buckets: [], error: '没有额度数据' };
-      return;
-    }
-    saveMuseAction(actionID);
-    usage[acc.id] = { at: Date.now(), buckets: museBuckets(sub) };
-  } catch (e) {
-    usage[acc.id] = { ...(usage[acc.id] || {}), error: '网络错误' };
-  }
-}
-
 async function pollUsage() {
-  const hasHark = !!usageCfg.url;
-  const hasMuse = accounts.some(a => isMuseAccount(a));
-  if (polling || (!hasHark && !hasMuse)) return; polling = true;
-  try {
-    await refreshStatus();
-    await Promise.all(accounts.filter(a => loginState[a.id]).map(a => {
-      if (isMuseAccount(a)) return fetchMuseUsage(a);
-      return hasHark ? fetchUsage(a) : null;
-    }));
-  } finally { polling = false; pushState(); }
+  if (polling || !usageCfg.url) return; polling = true;
+  try { await refreshStatus(); await Promise.all(accounts.filter(a => loginState[a.id]).map(fetchUsage)); } finally { polling = false; pushState(); }
 }
 ipcMain.handle('refreshUsage', () => pollUsage());
 ipcMain.handle('openBilling', () => {
@@ -503,6 +298,195 @@ ipcMain.handle('openBilling', () => {
   toast('在这个账号里聊几句、打开一下设置，再回总览导出诊断文件');
 });
 app.whenReady().then(() => { setTimeout(pollUsage, 4000); setInterval(pollUsage, 10 * 60 * 1000); });
+
+// ===== 信箱：窗口之间的 agent 互相写信 =====
+// agent 在回复里写 [[MAIL to=窗口名]] … [[/MAIL]]（放在代码块里最稳），这里扫描到后自动投递到收件窗口的输入框并发送。
+const mailStore = path.join(app.getPath('userData'), 'mail.json');
+let mail = { letters: [], seen: [], paused: false };
+const mailFresh = !fs.existsSync(mailStore); // 首次启用：把聊天记录里已有的信当作已处理，不重发
+try { mail = { ...mail, ...JSON.parse(fs.readFileSync(mailStore, 'utf8')) }; } catch {}
+const PLACEHOLDER = '这里写正文';
+const pendingSeen = new Map(); // hash -> 第一次看到的扫描轮次（等内容稳定再投递）
+const baselined = new Set();
+let scanRound = 0, mailSaveT;
+function mailSave() { clearTimeout(mailSaveT); mailSaveT = setTimeout(() => { mail.letters = mail.letters.slice(-200); mail.seen = mail.seen.slice(-2000); try { fs.writeFileSync(mailStore, JSON.stringify(mail)); } catch {} }, 300); }
+function hashOf(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length.toString(36); }
+const norm = s => String(s).replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim();
+function accLabel(a) { const i = accounts.indexOf(a); return `窗口${i + 1}「${a.name}」`; }
+function resolveTo(raw) {
+  const t = String(raw).trim().replace(/^["'「『]|["'」』]$/g, '').trim();
+  const m = /^(?:窗口|window\s*|#)?\s*(\d+)$/i.exec(t);
+  if (m) return accounts[+m[1] - 1] || null;
+  return accounts.find(a => a.name === t) || accounts.find(a => a.name.toLowerCase() === t.toLowerCase()) ||
+    accounts.find(a => a.name.includes(t) || t.includes(a.name)) || null;
+}
+const SCAN_JS = `(() => { const t = document.body ? document.body.innerText : ''; const out = [];
+  const re = /\\[\\[\\s*MAIL\\s+to\\s*[=:：]\\s*([^\\]\\n]+?)\\s*\\]\\]([\\s\\S]*?)\\[\\[\\s*\\/\\s*MAIL\\s*\\]\\]/gi; let m;
+  while ((m = re.exec(t))) out.push([m[1], m[2]]); return out; })()`;
+async function scanMail() {
+  scanRound++;
+  for (const a of accounts) {
+    const v = views.get(a.id);
+    if (!v || v.webContents.isDestroyed() || v.webContents.isLoading() || !/^https:\/\/app\.hark\.com/.test(v.webContents.getURL())) continue;
+    let found; try { found = await v.webContents.executeJavaScript(SCAN_JS); } catch { continue; }
+    const first = !baselined.has(a.id); baselined.add(a.id);
+    for (const [to, raw] of found || []) {
+      let body = norm(raw); let subject = '';
+      const sm = /^(?:主题|subject)\s*[:：]\s*(.+)\n?/i.exec(body); if (sm) { subject = sm[1].trim(); body = body.slice(sm[0].length).trim(); }
+      if (!body || body.includes(PLACEHOLDER)) continue;
+      const h = hashOf(norm(to) + '\n' + body);
+      if (mail.seen.includes(h)) continue;
+      if (first && mailFresh) { mail.seen.push(h); mailSave(); continue; }
+      const k = a.id + ':' + h;
+      if (!pendingSeen.has(k)) { pendingSeen.set(k, scanRound); continue; } // 下一轮内容仍一致才算写完
+      pendingSeen.delete(k); mail.seen.push(h);
+      let files = [];
+      body = body.replace(/^(?:附件|attachments?)\s*[:：]\s*(.+)$/gim, (_m, list) => { files.push(...list.split(/[,，、;；]/).map(x => x.trim().replace(/^[`"'「]|[`"'」]$/g, '')).filter(Boolean)); return ''; }).trim();
+      newLetter(a, to, subject, body, files);
+    }
+  }
+  for (const [k, r] of pendingSeen) if (scanRound - r > 3) pendingSeen.delete(k);
+}
+function newLetter(fromAcc, toRaw, subject, body, wantFiles = []) {
+  const target = resolveTo(toRaw);
+  const L = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: Date.now(), from: fromAcc.id, fromName: fromAcc.name,
+    to: target ? target.id : null, toName: target ? target.name : String(toRaw).trim(), subject, body, status: 'queued', note: '', want: wantFiles, files: [] };
+  if (!target) { L.status = 'failed'; L.note = '找不到收件窗口'; }
+  else if (target.id === fromAcc.id) { L.status = 'failed'; L.note = '不能寄给自己'; }
+  else if (mail.paused) { L.status = 'held'; L.note = '信箱已暂停'; }
+  else {
+    // 防死循环：同一对窗口 30 分钟内自动往来超过 16 封就停下等你
+    const pair = x => [x.from, x.to].sort().join('|'), p = pair(L);
+    const recent = mail.letters.filter(x => pair(x) === p && x.status === 'sent' && Date.now() - x.at < 30 * 60e3).length;
+    if (recent >= 16) { L.status = 'held'; L.note = '来回太多次，已暂停，点继续'; }
+  }
+  mail.letters.push(L); mailSave(); pushState();
+  if (L.status === 'queued' && wantFiles.length) { L.status = 'fetching'; pushState(); collectFiles(fromAcc, L).finally(() => { if (L.status === 'fetching') L.status = 'queued'; mailSave(); pushState(); deliverQueue(); }); }
+  else if (L.status === 'queued') deliverQueue();
+  else if (L.status === 'held') toast(`信箱：${fromAcc.name} → ${L.toName} 的信已暂停`);
+}
+function letterText(L) {
+  const from = accounts.find(a => a.id === L.from);
+  const att = (L.files || []).length ? `\n\n📎 附件（已随这条消息上传）：${L.files.map(f => f.name).join('、')}` : '';
+  const miss = (L.missing || []).length ? `\n⚠️ 没取到的附件：${L.missing.join('、')}，需要的话请对方重新发。` : '';
+  return `📨 信箱来信｜来自 ${from ? accLabel(from) : L.fromName}${L.subject ? '｜主题：' + L.subject : ''}\n\n${L.body}${att}${miss}\n\n——\n` +
+    `（这是 Hark Tools 信箱从另一个窗口的 agent 转来的信。回信请放进一个代码块，格式：\n[[MAIL to=${from ? from.name : L.fromName}]]\n主题: …\n附件: 文件名（可选，文件作为附件放在同一条回复里）\n${PLACEHOLDER}\n[[/MAIL]]\nHark Tools 会自动送达。讨论有结论后，由发起讨论的一方告诉用户。）`;
+}
+const COMPOSER_JS = text => `(async () => {
+  const vis = e => { const r = e.getBoundingClientRect(); return r.width > 40 && r.height > 10 && getComputedStyle(e).visibility !== 'hidden'; };
+  const cands = [...document.querySelectorAll('textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]')].filter(e => !e.disabled && !e.readOnly && vis(e));
+  const el = cands.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0];
+  if (!el) return 'no-composer';
+  el.focus();
+  const text = ${JSON.stringify(text)};
+  let ok = false; try { ok = document.execCommand('insertText', false, text); } catch {}
+  if (!ok || !(el.value ?? el.innerText).includes(text.slice(0, 20))) {
+    if (el.tagName === 'TEXTAREA') { const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(el, text); el.dispatchEvent(new Event('input', { bubbles: true })); }
+    else { el.textContent = text; el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' })); }
+  }
+  const root = el.closest('form') || el.parentElement?.parentElement?.parentElement || document;
+  const findSend = () => { const btns = [...root.querySelectorAll('button')].filter(b => vis(b));
+    return btns.find(b => b.type === 'submit') || btns.find(b => /send|发送|submit/i.test((b.getAttribute('aria-label') || '') + (b.title || '') + b.innerText)); };
+  for (let i = 0; i < 100; i++) { await new Promise(r => setTimeout(r, 400)); const b = findSend(); if (b && !b.disabled && b.getAttribute('aria-disabled') !== 'true') { b.click(); return 'sent'; } if (!b && i > 2) break; }
+  const kd = o => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, ...o }));
+  kd({}); return 'enter';
+})()`;
+let delivering = false;
+async function deliverQueue() {
+  if (delivering) return; delivering = true;
+  try {
+    for (const L of mail.letters.filter(x => x.status === 'queued')) {
+      const acc = accounts.find(a => a.id === L.to);
+      if (!acc) { L.status = 'failed'; L.note = '收件窗口已删除'; continue; }
+      const v = getView(acc), wc = v.webContents;
+      let r = 'no-composer';
+      if ((L.files || []).length) {
+        for (let i = 0; i < 12 && !(!wc.isLoading() && /^https:\/\/app\.hark\.com/.test(wc.getURL())); i++) await new Promise(res => setTimeout(res, 2500));
+        const up = await uploadFiles(wc, L.files.map(f => f.path));
+        if (!up) L.note = '附件没能上传（没找到上传入口）';
+      }
+      for (let i = 0; i < 12 && r === 'no-composer'; i++) {
+        if (!wc.isLoading() && /^https:\/\/app\.hark\.com/.test(wc.getURL())) { try { r = await wc.executeJavaScript(COMPOSER_JS(L.teach ? protocolText(acc) : letterText(L)), true); } catch { r = 'no-composer'; } }
+        if (r === 'no-composer') await new Promise(res => setTimeout(res, 2500));
+      }
+      if (r === 'no-composer') { L.status = 'failed'; L.note = loginState[acc.id] ? '没找到输入框' : '收件窗口未登录'; }
+      else { L.status = 'sent'; L.sentAt = Date.now(); toast(`信箱：${L.fromName} → ${acc.name}${L.subject ? '「' + L.subject + '」' : ''}`); }
+      mailSave(); pushState();
+      await new Promise(res => setTimeout(res, 1500));
+    }
+  } finally { delivering = false; }
+}
+// —— 附件：从写信窗口取文件（拦截下载），再上传到收件窗口的输入框 ——
+const dlWait = new Map(); // accId -> { dir, done(file) }
+const hookedSes = new Set();
+function hookDownloads(acc, wc) {
+  const ses = wc.session; if (hookedSes.has(ses)) return; hookedSes.add(ses);
+  ses.on('will-download', (_e, item) => {
+    const w = dlWait.get(acc.id); if (!w) return;
+    const name = (item.getFilename() || 'file').replace(/[\\/:*?"<>|]/g, '_');
+    const p = path.join(w.dir, name); item.setSavePath(p);
+    item.once('done', (_e2, state) => w.done(state === 'completed' ? { name, path: p, size: item.getTotalBytes() } : null));
+  });
+}
+const FIND_FILE_JS = name => `(() => { const n = ${JSON.stringify(name)}.toLowerCase();
+  const hit = s => String(s || '').toLowerCase().includes(n);
+  const as = [...document.querySelectorAll('a[href]')].filter(a => hit(a.download) || hit(a.innerText) || hit(a.title) || hit(a.getAttribute('aria-label')) || hit(decodeURIComponent(a.href)));
+  if (as.length) return { href: as[as.length - 1].href };
+  const els = [...document.querySelectorAll('body *')].filter(e => e.children.length < 6 && hit(e.innerText) && e.innerText.length < n.length + 120 && !e.closest('pre,code'));
+  const el = els[els.length - 1]; if (!el) return null;
+  const c = el.closest('a,button,[role=button],[tabindex]') || el; c.scrollIntoView({ block: 'center' }); c.click(); return { clicked: true };
+})()`;
+async function grabFile(acc, name, dir) {
+  const v = views.get(acc.id); if (!v) return null; const wc = v.webContents;
+  return new Promise(async resolve => {
+    let t; const done = f => { clearTimeout(t); dlWait.delete(acc.id); resolve(f); };
+    dlWait.set(acc.id, { dir, done }); t = setTimeout(() => done(null), 25000);
+    try { const r = await wc.executeJavaScript(FIND_FILE_JS(name), true); if (!r) return done(null); if (r.href) wc.downloadURL(r.href); }
+    catch { done(null); }
+  });
+}
+async function collectFiles(fromAcc, L) {
+  const dir = path.join(app.getPath('userData'), 'mail-files', L.id); fs.mkdirSync(dir, { recursive: true });
+  L.missing = [];
+  for (const name of L.want) {
+    const f = await grabFile(fromAcc, name, dir);
+    if (f && f.size <= 100 * 1024 * 1024) L.files.push(f); else L.missing.push(name);
+    pushState();
+  }
+  if (L.missing.length && !L.files.length) L.note = '附件没取到';
+}
+async function uploadFiles(wc, paths) {
+  const dbg = wc.debugger;
+  try { if (!dbg.isAttached()) dbg.attach('1.3'); } catch { return false; }
+  try {
+    const { root } = await dbg.sendCommand('DOM.getDocument', {});
+    let { nodeIds } = await dbg.sendCommand('DOM.querySelectorAll', { nodeId: root.nodeId, selector: 'input[type=file]:not([accept^="image"])' });
+    if (!nodeIds.length) ({ nodeIds } = await dbg.sendCommand('DOM.querySelectorAll', { nodeId: root.nodeId, selector: 'input[type=file]' }));
+    if (!nodeIds.length) return false;
+    const nodeId = nodeIds[nodeIds.length - 1];
+    for (const p of paths) { await dbg.sendCommand('DOM.setFileInputFiles', { files: [p], nodeId }); await new Promise(r => setTimeout(r, 2000)); }
+    await new Promise(r => setTimeout(r, 2000));
+    return true;
+  } catch { return false; }
+}
+ipcMain.handle('mailFiles', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.files && L.files[0]) shell.showItemInFolder(L.files[0].path); });
+function protocolText(acc) {
+  const list = accounts.map((a, i) => `窗口${i + 1}「${a.name}」${a.id === acc.id ? '（就是你）' : ''}`).join('、');
+  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口：${list}。当我让你去和另一个窗口讨论，或你需要别的窗口配合时，用写信的方式联系它：把信放进一个代码块发出，格式如下——\n\n[[MAIL to=窗口名或编号]]\n主题: 一句话主题\n${PLACEHOLDER}（文字、方案、代码都可以直接写在这里）\n[[/MAIL]]\n\nHark Tools 会自动把信送到对方窗口，对方也会用同样的格式回信给你。一封信一个代码块；正文里如果要放代码，直接写，不要再嵌套代码块。内容很长（大段代码、整个文件、多个文件）时，别塞进正文：把它存成文件（txt、md、源码文件、zip 压缩包等任意格式都行），作为附件放在写信的同一条回复里，并在信里加一行「附件: 文件名1, 文件名2」，Hark Tools 会把文件一起送过去。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」，不用写信。`;
+}
+ipcMain.handle('mailPause', (_e, on) => { mail.paused = !!on; if (!on) mail.letters.filter(x => x.status === 'held').forEach(x => { x.status = 'queued'; x.note = ''; }); mailSave(); pushState(); deliverQueue(); });
+ipcMain.handle('mailRetry', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.to) { L.status = 'queued'; L.note = ''; L.at = Date.now(); mailSave(); pushState(); deliverQueue(); } });
+ipcMain.handle('mailClear', () => { mail.letters = mail.letters.filter(x => x.status === 'queued'); mailSave(); pushState(); });
+ipcMain.handle('mailTeach', async (_e, id) => {
+  const targets = id ? accounts.filter(a => a.id === id) : accounts.filter(a => loginState[a.id]);
+  for (const a of targets) {
+    const L = { id: 'p' + Date.now().toString(36) + a.id.slice(0, 3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明', body: '', status: 'queued', note: '', teach: true };
+    mail.letters.push(L);
+  }
+  mailSave(); pushState(); deliverQueue();
+});
+function mailSnapshot() { return { paused: mail.paused, letters: mail.letters.slice(-40).map(({ body, files, ...x }) => ({ ...x, nfiles: (files || []).length, fileNames: (files || []).map(f => f.name), preview: String(body).slice(0, 140) })) }; }
+app.whenReady().then(() => setInterval(() => { scanMail().catch(() => {}); }, 3000));
 
 // 远程更新：由 bootstrap.js 从 GitHub 拉取新版界面/逻辑代码，点击后重启生效
 const boot = global.__cockpitBoot || {};
@@ -541,7 +525,7 @@ async function importCookies(accId, cookies) {
   for (const c of cookies || []) {
     try {
       const host = String(c.domain || '').replace(/^\./, '');
-      if (!/(^|\.)hark\.com$/.test(host) && !/(^|\.)muse\.ai$/.test(host)) continue;
+      if (!/(^|\.)hark\.com$/.test(host)) continue;
       const d = { url: `https://${host}${c.path || '/'}`, name: c.name, value: c.value, path: c.path || '/',
         secure: !!c.secure, httpOnly: !!c.httpOnly };
       if (!c.hostOnly && !c.name.startsWith('__Host-')) d.domain = c.domain;
@@ -562,38 +546,18 @@ function startBridge() {
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
-    if (req.method === 'GET' && req.url === '/accounts') return json(200, { accounts: accounts.map(a => ({ id: a.id, name: a.name, kind: normalizeKind(a.kind, a.url) })), activeId });
+    if (req.method === 'GET' && req.url === '/accounts') return json(200, { accounts: accounts.map(a => ({ id: a.id, name: a.name })), activeId });
     if (req.method === 'POST' && req.url === '/import') {
       let body = ''; req.on('data', d => { body += d; if (body.length > 2e6) req.destroy(); });
       req.on('end', async () => {
         try {
-          const { accountId, cookies, newName, silent, kind } = JSON.parse(body || '{}');
+          const { accountId, cookies, newName, silent } = JSON.parse(body || '{}');
           let id = accountId;
-          const k = normalizeKind(kind);
-          if (!id || id === '__new__') {
-            const nCount = accounts.filter(a => normalizeKind(a.kind, a.url) === k).length + 1;
-            const acc = {
-              id: Date.now().toString(36),
-              name: newName || `${k === 'muse' ? 'Muse' : 'Hark'} ${nCount}`,
-              url: urlForKind(k),
-              kind: k,
-            };
-            accounts.push(acc); save(); id = acc.id;
-          } else if (kind) {
-            const existing = accounts.find(a => a.id === id);
-            if (existing) {
-              const nk = normalizeKind(kind, existing.url);
-              if (normalizeKind(existing.kind, existing.url) !== nk) {
-                existing.kind = nk;
-                existing.url = urlForKind(nk);
-                save();
-              }
-            }
-          }
+          if (!id || id === '__new__') { const acc = { id: Date.now().toString(36), name: newName || `Hark ${accounts.length + 1}`, url: DEFAULT_URL }; accounts.push(acc); save(); id = acc.id; }
           const n = await importCookies(id, cookies);
           const acc = accounts.find(a => a.id === id);
           const v = views.get(id);
-          if (v && !silent) v.webContents.loadURL(acc.url || urlForKind(acc.kind));
+          if (v && !silent) v.webContents.loadURL(acc.url || DEFAULT_URL);
           if (!silent) { activate(id); win.show(); win.focus(); toast(`已从浏览器导入「${acc.name}」的登录`); }
           pushState();
           json(200, { ok: true, count: n, accountId: id });
