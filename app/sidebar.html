@@ -57,7 +57,7 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
   <button class="ib" id="chk" title="检查更新"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></button></div>
 </div>
 <div id="dlg"><div class="box"><div class="t" id="dt"></div><input id="di"><div class="b"><button class="btn" id="dc">取消</button><button class="btn pri" id="do">确定</button></div></div></div>
-<div id="menu"><div data-a="rename">重命名</div><div data-a="reload">刷新页面</div><div data-a="diag">导出诊断文件</div><hr><div data-a="remove" class="danger">删除并清除登录</div></div>
+<div id="menu"><div data-a="rename">重命名</div><div data-a="reload">刷新页面</div><hr><div data-a="inboxHere">信箱：在当前打开的项目收信</div><div data-a="inboxChat">信箱：改回在聊天收信</div><hr><div data-a="diag">导出诊断文件</div><hr><div data-a="remove" class="danger">删除并清除登录</div></div>
 <script>
 const TINTS=[['#3B4A5C','#BFD3EA'],['#2F4A47','#A8DCCB'],['#4A3F57','#D6C5EA'],['#55413F','#EBC3B8'],['#504631','#E8D3A2'],['#3C4A35','#C6DDB0']];
 const tint=s=>{let h=0;for(const c of s||'')h=(h*31+c.charCodeAt(0))>>>0;return TINTS[h%TINTS.length]};
@@ -84,10 +84,10 @@ function render(){
   st.accounts.forEach((a,i)=>{
     const [bg,fg]=tint(a.name);const el=document.createElement('button');
     el.className='acc'+(!st.showHome&&a.id===st.activeId?' on':'');
-    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><b></b><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.loggedIn?'已登录':'未登录'}${daily(a)}</div></div>${i<9?`<span class="key">Ctrl ${i+1}</span>`:''}`;
+    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><b></b><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.loggedIn?'已登录':'未登录'}${a.inboxUrl?'<span class="q">项目收信</span>':''}${daily(a)}</div></div>${i<9?`<span class="key">Ctrl ${i+1}</span>`:''}`;
     el.querySelector('.mono-av').textContent=(a.name||'H').trim()[0].toUpperCase();el.querySelector('b').textContent=a.name;
     el.onclick=()=>cockpit.switchTo(a.id);
-    el.oncontextmenu=e=>{e.preventDefault();ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-170)+'px';menu.style.top=Math.min(e.clientY,innerHeight-130)+'px';menu.style.display='block'};
+    el.oncontextmenu=e=>{e.preventDefault();ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-170)+'px';menu.style.top=Math.min(e.clientY,innerHeight-200)+'px';menu.style.display='block'};
     list.appendChild(el);
   });
 }
@@ -95,6 +95,8 @@ document.onclick=()=>menu.style.display='none';
 menu.onclick=e=>{e.stopPropagation();menu.style.display='none';const act=e.target.dataset.a,id=ctxId;if(!act||!id)return;const a=st.accounts.find(x=>x.id===id);
   if(act==='rename')ask('重命名账号',a&&a.name,n=>cockpit.rename(id,n));
   if(act==='reload')cockpit.reload(id);
+  if(act==='inboxHere')cockpit.setInbox(id,'here');
+  if(act==='inboxChat')cockpit.setInbox(id,'chat');
   if(act==='diag')cockpit.exportDiag();
   if(act==='remove')ask(`删除「${a?a.name:''}」并清除它的登录？`,'',()=>cockpit.remove(id),false);};
 add.onclick=()=>askAdd(o=>cockpit.add(o));
