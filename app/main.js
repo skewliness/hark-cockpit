@@ -881,6 +881,11 @@ async function sitePoll() {
     }
   }
   if (fresh) { mail.siteSeq = j.next_seq; mailSave(); pushState(); deliverQueue(); return; } // 首次只记游标，不翻旧信
+  // 网站把 since_seq=0 当作“只建游标”：游标停在 0（建游标时还一封信都没有）会永远收不到第一封，这里改从完整列表补
+  if (mail.siteSeq === 0 && j.next_seq > 0 && !(j.messages || []).length) {
+    const all = await siteGet('/api/message');
+    j.messages = ((all && all.messages) || []).filter(m => Number(m.seq) > 0 && Number(m.seq) <= j.next_seq && (m.to === 'all' || m.to === 'hark' || /^hark\./.test(m.to || ''))).sort((x, y) => x.seq - y.seq);
+  }
   const hark = accounts.filter(a => /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL));
   const ring = new Map(); // accId -> [msg]
   for (const m of j.messages || []) {
