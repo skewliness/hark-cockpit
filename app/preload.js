@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('cockpit', {
   switchTo: (id) => ipcRenderer.invoke('switch', id),
   rename: (id, name) => ipcRenderer.invoke('rename', { id, name }),
   reload: (id) => ipcRenderer.invoke('reload', id),
+  setInbox: (id, mode) => ipcRenderer.invoke('setInbox', { id, mode }),
   remove: (id) => ipcRenderer.invoke('remove', id),
   win: (a) => ipcRenderer.invoke('win', a),
   nav: (d) => ipcRenderer.invoke('nav', d),
