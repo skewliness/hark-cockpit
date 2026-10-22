@@ -62,6 +62,7 @@ function getView(acc) {
   const v = new WebContentsView({ webPreferences: { partition: partitionOf(acc.id), contextIsolation: true, backgroundThrottling: false } });
   v.setVisible(false);
   win.contentView.addChildView(v);
+  { const [w, h] = win.getContentSize(); v.setBounds({ x: SIDEBAR_W, y: TOOLBAR_H, width: Math.max(0, w - SIDEBAR_W), height: Math.max(0, h - TOOLBAR_H) }); } // 后台窗口也要有尺寸，不然页面布局为 0，信箱找不到输入框
   v.webContents.setUserAgent(UA);
   hookKeys(v.webContents);
   // Google OAuth 等弹窗留在同一会话内，其他外链用系统浏览器打开
@@ -606,7 +607,8 @@ function letterText(L) {
 const COMPOSER_JS = text => `(async () => {
   const vis = e => { const r = e.getBoundingClientRect(); return r.width > 40 && r.height > 10 && getComputedStyle(e).visibility !== 'hidden'; };
   const cands = [...document.querySelectorAll('textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"]')].filter(e => !e.disabled && !e.readOnly && vis(e));
-  const el = cands.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0];
+  const el = cands.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0]
+    || [...document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"]')].filter(e => !e.disabled && !e.readOnly).pop();
   if (!el) return 'no-composer';
   el.focus();
   const text = ${JSON.stringify(text)};
@@ -636,7 +638,7 @@ async function deliverQueue() {
         const up = await uploadFiles(wc, L.files.map(f => f.path));
         if (!up) L.note = '附件没能上传（没找到上传入口）';
       }
-      for (let i = 0; i < 12 && r === 'no-composer'; i++) {
+      for (let i = 0; i < 24 && r === 'no-composer'; i++) {
         if (!wc.isLoading() && /^https:\/\/app\.hark\.com/.test(wc.getURL())) { try { r = await wc.executeJavaScript(COMPOSER_JS(L.teach ? protocolText(acc) : letterText(L)), true); } catch { r = 'no-composer'; } }
         if (r === 'no-composer') await new Promise(res => setTimeout(res, 2500));
       }
