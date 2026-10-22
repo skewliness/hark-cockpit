@@ -12,10 +12,22 @@ button{-webkit-app-region:no-drag}
 .sp{flex:1}
 #upd{display:none;height:30px;padding:0 12px;border-radius:8px;border:0;background:var(--brass);color:var(--brass-ink);font-weight:500;cursor:pointer;animation:rise .2s ease-out}
 #upd:hover{background:#E3BE7E}
+/* 更新公告：右上角，有新内容时亮起 */
+#notes{height:30px;display:flex;align-items:center;gap:7px;padding:0 11px 0 10px;margin-left:8px;border-radius:999px;border:1px solid var(--seam);background:transparent;color:var(--haze);font:500 12.5px var(--sans);cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+#notes:hover{background:var(--raise);color:var(--paper)}
+#notes svg{width:15px;height:15px;flex:none}
+#notes.new{border-color:rgba(216,176,106,.6);color:var(--paper);background:linear-gradient(90deg,rgba(216,176,106,.16),rgba(216,176,106,.06))}
+#notes.new svg{color:var(--brass);animation:ring 2.4s ease-in-out infinite;transform-origin:30% 60%}
+#notes .tag{display:none;align-items:center;height:16px;padding:0 6px;border-radius:999px;background:var(--rust);color:#fff;font:700 9.5px/16px var(--sans);letter-spacing:.6px;box-shadow:0 0 0 0 rgba(224,122,100,.6);animation:pulse 1.8s ease-out infinite}
+#notes.new .tag{display:inline-flex}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(224,122,100,.55)}70%{box-shadow:0 0 0 7px rgba(224,122,100,0)}100%{box-shadow:0 0 0 0 rgba(224,122,100,0)}}
+@keyframes ring{0%,70%,100%{transform:rotate(0)}76%{transform:rotate(-12deg)}82%{transform:rotate(10deg)}88%{transform:rotate(-6deg)}94%{transform:rotate(3deg)}}
+@media (prefers-reduced-motion: reduce){#notes svg,#notes .tag{animation:none}}
 </style></head><body>
 <div class="title"><b id="tt">总览</b><span id="ts"></span></div>
 <div class="sp"></div>
 <button id="upd" title="重启后使用新版本"></button>
+<button id="notes" title="查看更新公告"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l6 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg><span>更新公告</span><span class="tag">NEW</span></button>
 <script>
 let st={};
 function render(){
@@ -25,5 +37,7 @@ function render(){
   ts.className=!home&&a.loggedIn?'ok':'';
 }
 cockpit.onUpdate(u=>{if(u.state==='ready'){upd.textContent=`新版本 v${u.version} 已下载，重启更新`;upd.style.display='block';upd.onclick=()=>cockpit.installUpdate();}});
+const showNotes=n=>{notes.classList.toggle('new',!!(n&&n.unread));notes.title=n&&n.unread?`有新的更新公告：v${n.latest}`:'查看更新公告';};
+notes.onclick=()=>cockpit.openNotes();cockpit.onNotes(showNotes);cockpit.notes().then(showNotes);
 cockpit.onState(s=>{st=s;render()});cockpit.getState().then(s=>{st=s;render()});
 </script></body></html>
