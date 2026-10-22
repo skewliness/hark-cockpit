@@ -22,6 +22,19 @@ function load() {
 }
 function save() { fs.writeFileSync(store, JSON.stringify({ accounts, activeId }, null, 2)); }
 
+// 快捷键 Ctrl/Cmd+1–9 切换账号：在主进程拦截，无论焦点在侧栏、总览还是右侧账号页都生效，可按住 Ctrl 连续切换
+function hookKeys(wc) {
+  wc.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt || input.shift) return;
+    const m = /^(?:Digit|Numpad)([1-9])$/.exec(input.code || '');
+    if (!m) return;
+    const acc = accounts[+m[1] - 1];
+    if (!acc) return;
+    e.preventDefault();
+    if (acc.id !== activeId || showHome) activate(acc.id);
+  });
+}
+
 function partitionOf(id) { return `persist:hark-${id}`; }
 
 function getView(acc) {
@@ -32,6 +45,7 @@ function getView(acc) {
   v.setVisible(false);
   win.contentView.addChildView(v);
   v.webContents.setUserAgent(UA);
+  hookKeys(v.webContents);
   // Google OAuth 等弹窗留在同一会话内，其他外链用系统浏览器打开
   v.webContents.setWindowOpenHandler(({ url }) => {
     if (/accounts\.google\.com|hark\.com|appleid\.apple\.com|login\.microsoftonline\.com/.test(url)) {
@@ -135,6 +149,7 @@ app.whenReady().then(() => {
   home = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
   win.contentView.addChildView(home);
   home.webContents.loadFile(path.join(__dirname, 'overview.html'));
+  for (const wc of [sidebar.webContents, home.webContents, toolbar.webContents]) hookKeys(wc);
   for (const wc of [sidebar.webContents, home.webContents, toolbar.webContents]) wc.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   win.on('resize', layout);
   win.on('maximize', () => { layout(); pushState(); }); win.on('unmaximize', () => { layout(); pushState(); });
