@@ -224,7 +224,7 @@ function renderMail(){
   const M=st.mail||{letters:[],paused:false},L=[...M.letters].reverse();
   const hm=t=>{const d=new Date(t);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
   const ST={sent:['已送达',''],queued:['投递中…','q'],fetching:['取附件…','q'],held:['已暂停','h'],failed:['失败','f']};
-  mailbox.innerHTML=`<div class="mhead"><h2>信箱<small>${M.paused?'已暂停，新信先存着':'窗口之间的 agent 会自动写信讨论'}</small></h2><button id="mt" title="通常不需要：新窗口登录后会自动学会信箱">重发说明</button><button id="mp">${M.paused?'继续投递':'暂停'}</button>${L.length?'<button id="mc">清空记录</button>':''}</div>`+
+  mailbox.innerHTML=`<div class="mhead"><h2>信箱<small>${M.paused?'已暂停，新信先存着':(M.site?'信走 agent.miracleai.club，这里只负责提醒':'窗口之间的 agent 会自动写信讨论')}</small></h2><button id="mt" title="通常不需要：新窗口登录后会自动学会信箱">重发说明</button><button id="mp">${M.paused?'继续投递':'暂停'}</button>${L.length?'<button id="mc">清空记录</button>':''}</div>`+
     (L.length?'':'<div class="mempty">每个已登录的窗口会自动收到一份信箱说明（以后新加的窗口也一样），并拿到自己唯一的信箱地址。之后在窗口 1 里说「去和窗口 2 讨论一下这部分」，两边的 agent 就会自己写信来回，讨论完由窗口 1 告诉你结果。</div>');
   for(const x of L){const [t,c]=ST[x.status]||[x.status,''];const el=document.createElement('div');el.className='ml';
     el.innerHTML=`<time>${hm(x.at)}</time><div class="who"></div><div class="pv"></div><div class="sb ${c}"><span></span>${x.nfiles?'<button class="fl">📎 '+x.nfiles+'</button>':''}${(x.status==='failed'&&x.to)||x.status==='held'?'<button class="rt">重发</button>':''}</div>`;
