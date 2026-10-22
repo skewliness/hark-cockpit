@@ -91,8 +91,16 @@ const spin=(t,v,d,x='')=>`<animateTransform attributeName="transform" type="${t}
 const girl=(k,x,y,w,h,motion)=>`<g>${motion}<image href="data:image/webp;base64,${GIRL[k]}" x="${x}" y="${y}" width="${w}" height="${h}"/></g>`;
 const star=(x,y,r,d)=>`<path d="M${x} ${y-r}L${x+r*.3} ${y-r*.3}L${x+r} ${y}L${x+r*.3} ${y+r*.3}L${x} ${y+r}L${x-r*.3} ${y+r*.3}L${x-r} ${y}L${x-r*.3} ${y-r*.3}Z" fill="${C.gold}">${anim('opacity','1;.2;1',d)}</path>`;
 const rays=(cx,cy,r1,r2,n)=>Array.from({length:n},(_,i)=>{const a=i/n*Math.PI*2;return `<line x1="${cx+Math.cos(a)*r1}" y1="${cy+Math.sin(a)*r1}" x2="${cx+Math.cos(a)*r2}" y2="${cy+Math.sin(a)*r2}"/>`}).join('');
-const sunAt=(cx,cy,r)=>`<g stroke="${C.sun}" stroke-width="2.6" stroke-linecap="round">${rays(cx,cy,r+4,r+8,8)}${spin('rotate',`0 ${cx} ${cy};45 ${cx} ${cy}`,'6s')}</g><circle cx="${cx}" cy="${cy}" r="${r}" fill="${C.sun}"/>`;
-const moonAt=(x,y,s)=>`<g transform="translate(${x},${y}) scale(${s})"><path d="M6-12A13 13 0 1 0 14 6A10 10 0 0 1 6-12Z" fill="${C.moon}"/></g>`;
+const face=(cx,cy,r,c='#2A2216')=>`<circle cx="${cx-r*.36}" cy="${cy-r*.06}" r="${r*.13}" fill="${c}">${anim('r',`${r*.13};${r*.13};${r*.02};${r*.13}`,'4.5s','keyTimes="0;.92;.96;1"')}</circle><circle cx="${cx+r*.36}" cy="${cy-r*.06}" r="${r*.13}" fill="${c}">${anim('r',`${r*.13};${r*.13};${r*.02};${r*.13}`,'4.5s','keyTimes="0;.92;.96;1"')}</circle><path d="M${cx-r*.22} ${cy+r*.28}q${r*.22} ${r*.24} ${r*.44} 0" stroke="${c}" stroke-width="${r*.13}" fill="none" stroke-linecap="round"/><ellipse cx="${cx-r*.62}" cy="${cy+r*.26}" rx="${r*.18}" ry="${r*.11}" fill="#E8907A" opacity=".8"/><ellipse cx="${cx+r*.62}" cy="${cy+r*.26}" rx="${r*.18}" ry="${r*.11}" fill="#E8907A" opacity=".8"/>`;
+const sunAt=(cx,cy,r)=>`<g stroke="${C.sun}" stroke-width="${r*.2}" stroke-linecap="round">${rays(cx,cy,r*1.3,r*1.7,8)}${spin('rotate',`0 ${cx} ${cy};45 ${cx} ${cy}`,'6s')}</g><circle cx="${cx}" cy="${cy}" r="${r}" fill="${C.sun}"/>${face(cx,cy,r)}`;
+let moonN=0;
+const moonAt=(x,y,s,sleep=true)=>{const c='#3A4550';return `<g transform="translate(${x},${y}) scale(${s})"><g>${spin('rotate','-6;6;-6','6s')}
+  <path d="M.44-13.99A14 14 0 1 0 13.56 3.49A11 11 0 0 1 .44-13.99Z" fill="${C.moon}"/>
+  <circle cx="4" cy="9.5" r="1.4" fill="#D6C9A8"/><circle cx="-6" cy="-7" r="1" fill="#D6C9A8"/>
+  ${sleep?`<path d="M-11.5 0q1.8 1.8 3.6 0M-5 2.2q1.8 1.8 3.6 0" stroke="${c}" stroke-width="1.2" fill="none" stroke-linecap="round"/>`:`<circle cx="-9.7" cy=".4" r="1.2" fill="${c}"/><circle cx="-3.2" cy="2.4" r="1.2" fill="${c}"/>`}
+  <path d="M-8 5.6q1.4 1.2 2.8 .4" stroke="${c}" stroke-width="1.1" fill="none" stroke-linecap="round"/>
+  <ellipse cx="-12" cy="4" rx="1.5" ry=".9" fill="#E8907A" opacity=".75"/><ellipse cx="-2" cy="6.4" rx="1.5" ry=".9" fill="#E8907A" opacity=".75"/>
+    </g></g>`};
 const ground='<path d="M8 93h144" stroke="#4A5560" stroke-width="1.6" stroke-linecap="round"/>';
 const steam=(x,y)=>`<g stroke="#C9D6DF" stroke-width="1.1" fill="none" stroke-linecap="round"><path d="M${x} ${y}q-2-3 0-6q2-3 0-6">${anim('opacity','0;.9;0','2.4s')}${spin('translate','0 2;0 -3','2.4s')}</path><path d="M${x+4} ${y}q-2-3 0-6q2-3 0-6">${anim('opacity','0;.9;0','2.4s','begin="1.2s"')}${spin('translate','0 2;0 -3','2.4s','begin="1.2s"')}</path></g>`;
 const SCENES={
@@ -103,9 +111,9 @@ const SCENES={
   noon:{t:'中午好',s:'记得吃饭，聊天可以等等',svg:`${ground}${sunAt(36,30,12)}${star(62,58,2,'2s')}
     ${girl('noon',86,5,58.5,88,spin('translate','0 0;0 -1.5;0 0','1.4s'))}`},
   afternoon:{t:'下午好',s:'来杯茶，接着忙',svg:`${ground}${sunAt(34,28,11)}
-    <g>${spin('translate','0 0;14 0;0 0','10s')}<path d="M20 54a8 8 0 0 1 3-15.5 11 11 0 0 1 20-2A7.5 7.5 0 0 1 49 54z" fill="#C9D6DF" opacity=".85"/></g>
+    <g>${spin('translate','0 0;14 0;0 0','10s')}<path d="M24 62a8 8 0 0 1 3-15.5 11 11 0 0 1 20-2A7.5 7.5 0 0 1 53 62z" fill="#C9D6DF" opacity=".85"/></g>
     ${girl('afternoon',86,9,64,84,spin('rotate','-1.5 118 93;1.5 118 93;-1.5 118 93','4s'))}${steam(101,54)}`},
-  evening:{t:'晚上好',s:'今天辛苦了',svg:`<rect x="10" y="12" width="34" height="30" rx="4" fill="#2C363F" stroke="#4A5560" stroke-width="1.6"/>${moonAt(29,27,.7)}${star(18,18,1.8,'2.4s')}${star(56,14,2,'3s')}
+  evening:{t:'晚上好',s:'今天辛苦了',svg:`<rect x="10" y="12" width="34" height="30" rx="4" fill="#2C363F" stroke="#4A5560" stroke-width="1.6"/>${moonAt(27,27,.85,false)}${star(18,18,1.8,'2.4s')}${star(56,14,2,'3s')}
     <circle cx="101" cy="60" r="9" fill="#FFE7A8" opacity=".25">${anim('opacity','.15;.35;.15','3s')}</circle>
     ${girl('evening',64,3,89,92,spin('translate','0 0;0 -.8;0 0','4s'))}`},
   night:{t:'夜深了',s:'别熬太晚，明天再聊也行',svg:`${moonAt(28,24,.9)}${star(52,14,2.2,'2.2s')}${star(14,46,1.8,'3s')}${star(150,12,1.6,'2.6s')}
