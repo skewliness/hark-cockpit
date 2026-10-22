@@ -84,7 +84,7 @@ menu.onclick=e=>{e.stopPropagation();menu.style.display='none';const act=e.targe
   if(act==='remove')ask(`删除「${a?a.name:''}」并清除它的登录？`,'',()=>cockpit.remove(id),false);};
 add.onclick=()=>ask('给新账号起个名字','Hark '+(st.accounts.length+1),name=>cockpit.add({name}));
 homeBtn.onclick=()=>cockpit.home();
-document.addEventListener('keydown',e=>{const n=+e.key;if((e.ctrlKey||e.metaKey)&&n>=1&&n<=9&&st.accounts[n-1])cockpit.switchTo(st.accounts[n-1].id);});
+// Ctrl 1–9 由主进程统一处理（main.js hookKeys）
 cockpit.onState(s=>{st=s;render()});cockpit.getState().then(s=>{st=s;render()});
 const showVer=()=>cockpit.version().then(v=>ver.textContent='v'+v);showVer();
 const check=async()=>{ver.textContent='正在检查…';const r=await cockpit.checkUpdate();
