@@ -639,7 +639,7 @@ async function deliverQueue() {
         if (!up) L.note = '附件没能上传（没找到上传入口）';
       }
       for (let i = 0; i < 24 && r === 'no-composer'; i++) {
-        if (!wc.isLoading() && /^https:\/\/app\.hark\.com/.test(wc.getURL())) { try { r = await wc.executeJavaScript(COMPOSER_JS(L.teach ? protocolText(acc) : letterText(L)), true); } catch { r = 'no-composer'; } }
+        if (!wc.isLoading() && /^https:\/\/app\.hark\.com/.test(wc.getURL())) { try { r = await wc.executeJavaScript(COMPOSER_JS(L.teach ? protocolText(acc) : (L.raw || letterText(L))), true); } catch { r = 'no-composer'; } }
         if (r === 'no-composer') await new Promise(res => setTimeout(res, 2500));
       }
       if (r === 'no-composer') { L.status = 'failed'; L.note = loginState[acc.id] ? '没找到输入框' : '收件窗口未登录'; if (L.teach && mail.taught) { L.tries = (L.tries || 0) + 1; if (L.tries < 3) delete mail.taught[acc.id]; } }
@@ -704,6 +704,7 @@ async function uploadFiles(wc, paths) {
 }
 ipcMain.handle('mailFiles', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.files && L.files[0]) shell.showItemInFolder(L.files[0].path); });
 function protocolText(acc) {
+  if (site.ok) return siteProtocolText(acc);
   return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，每个窗口有唯一的信箱地址，你的地址是 ${mailAddr(acc)}。通讯录：\n${directory(acc)}\n\n当我让你去和另一个窗口讨论，或你需要别的窗口配合时，用写信的方式联系它：把信放进一个代码块发出，格式如下——\n\n[[MAIL to=对方的信箱地址，例如 #ABCD]]\n主题: 一句话主题\n${PLACEHOLDER}（文字、方案、代码都可以直接写在这里）\n[[/MAIL]]\n\nHark Tools 会自动把信送到对方窗口，对方也会用同样的格式回信给你。一封信一个代码块；正文里如果要放代码，直接写，不要再嵌套代码块。内容很长（大段代码、整个文件、多个文件）时，别塞进正文：把它存成文件（txt、md、源码文件、zip 压缩包等任意格式都行），作为附件放在写信的同一条回复里，并在信里加一行「附件: 文件名1, 文件名2」，Hark Tools 会把文件一起送过去。收件人优先写信箱地址（窗口改名或调顺序时地址不变），也可以写窗口名或编号。你的身份由 Hark Tools 按发信窗口自动标注，不用自己署名。新窗口加入时，你收到的来信末尾会附最新通讯录。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」，不用写信。`;
 }
 ipcMain.handle('mailPause', (_e, on) => { mail.paused = !!on; if (!on) mail.letters.filter(x => x.status === 'held').forEach(x => { x.status = 'queued'; x.note = ''; }); mailSave(); pushState(); deliverQueue(); });
@@ -718,7 +719,7 @@ ipcMain.handle('mailTeach', async (_e, id) => {
   }
   mailSave(); pushState(); deliverQueue();
 });
-function mailSnapshot() { return { paused: mail.paused, addrs: Object.fromEntries(accounts.map(a => [a.id, mailAddr(a)])), taught: mail.taught || {}, letters: mail.letters.slice(-40).map(({ body, files, ...x }) => ({ ...x, nfiles: (files || []).length, fileNames: (files || []).map(f => f.name), preview: String(body).slice(0, 140) })) }; }
+function mailSnapshot() { return { paused: mail.paused, site: site.ok, addrs: Object.fromEntries(accounts.map(a => [a.id, mailAddr(a)])), taught: mail.taught || {}, letters: mail.letters.slice(-40).map(({ body, files, ...x }) => ({ ...x, nfiles: (files || []).length, fileNames: (files || []).map(f => f.name), preview: String(body).slice(0, 140) })) }; }
 app.whenReady().then(() => setInterval(() => { scanMail().catch(() => {}); }, 3000));
 
 
@@ -848,3 +849,55 @@ function startBridge() {
 }
 app.whenReady().then(startBridge);
 app.on('window-all-closed', () => app.quit());
+
+// —— 网站信箱门铃：信放在 agent.miracleai.club，Hark Tools 只负责提醒收件窗口 ——
+const SITE = 'https://agent.miracleai.club';
+const site = { ok: false, checkedAt: 0 };
+const siteAddr = a => 'hark.' + mailAddr(a).slice(1);
+function siteProtocolText(acc) {
+  const A = siteAddr(acc), W = A.slice(5);
+  const book = accounts.filter(a => /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL)).map((a, i) => `${siteAddr(a)} 「${a.name}」${a.id === acc.id ? '（就是你）' : ''}`).join('\n');
+  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，窗口之间通过 ${SITE} 的传信接口互相写信。你的信箱地址是 ${A}。\n通讯录：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"hark","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
+}
+async function siteGet(q) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
+  try { const r = await require('electron').net.fetch(SITE + q, { signal: ctl.signal }); if (!r.ok) return null; return await r.json(); } catch { return null; } finally { clearTimeout(t); }
+}
+async function sitePoll() {
+  if (mail.paused) return;
+  const fresh = mail.siteSeq == null;
+  const j = await siteGet(`/api/message?to_prefix=hark.&since_seq=${fresh ? 0 : mail.siteSeq}&limit=100`);
+  if (!j || typeof j.next_seq !== 'number') { // 网站还没上线窗口级地址：继续用页面抓信
+    if (site.ok) { site.ok = false; pushState(); }
+    return;
+  }
+  if (!site.ok) {
+    site.ok = true;
+    // 第一次切到网站信箱：给所有窗口重发一次新说明
+    mail.siteTaught = mail.siteTaught || {};
+    for (const a of accounts) if (loginState[a.id] && !mail.siteTaught[a.id] && /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL)) {
+      mail.siteTaught[a.id] = Date.now();
+      mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明（网站版）', body: '', status: 'queued', note: '', teach: true, auto: true });
+    }
+  }
+  if (fresh) { mail.siteSeq = j.next_seq; mailSave(); pushState(); deliverQueue(); return; } // 首次只记游标，不翻旧信
+  const hark = accounts.filter(a => /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL));
+  const ring = new Map(); // accId -> [msg]
+  for (const m of j.messages || []) {
+    let targets = [];
+    const w = /^hark\.([A-Z]{4})$/.exec(m.to || '');
+    if (w) targets = hark.filter(a => mailAddr(a) === '#' + w[1]);
+    else if (m.to === 'hark' || m.to === 'all') targets = hark.filter(a => loginState[a.id]);
+    targets = targets.filter(a => siteAddr(a) !== m.from); // 不提醒发信人自己
+    for (const a of targets) { if (!ring.has(a.id)) ring.set(a.id, []); ring.get(a.id).push(m); }
+  }
+  for (const [id, ms] of ring) {
+    const a = accounts.find(x => x.id === id);
+    const lines = ms.map(m => `• 来自 ${m.from}${m.title ? '「' + m.title + '」' : ''}（${m.bytes || 0} 字节）\n  读取：curl -s ${SITE}/api/message/${m.id}`).join('\n');
+    const raw = `📨 你有 ${ms.length} 封新信（收件地址 ${siteAddr(a)}）\n${lines}\n\n读完请 ack：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"。需要回信就用你的 token POST ${SITE}/api/message，to 填对方地址。规则见 ${SITE}/notice.md。`;
+    const L = { id: 'b' + Date.now().toString(36) + id.slice(-3), at: Date.now(), from: null, fromName: ms.length === 1 ? ms[0].from : `${ms.length} 封网站来信`, to: id, toName: a.name, subject: ms.length === 1 ? (ms[0].title || '网站来信') : ms.map(m => m.title || m.from).join('；').slice(0, 60), body: raw, raw, status: 'queued', note: '', site: true };
+    mail.letters.push(L);
+  }
+  mail.siteSeq = j.next_seq; mailSave(); if (ring.size) { pushState(); deliverQueue(); }
+}
+app.whenReady().then(() => { setTimeout(() => sitePoll().catch(() => {}), 4000); setInterval(() => { sitePoll().catch(() => {}); }, 5000); });
