@@ -495,7 +495,7 @@ async function pollUsage() {
       if (isMuseAccount(a)) return fetchMuseUsage(a);
       return hasHark ? fetchUsage(a) : null;
     }));
-  } finally { polling = false; pushState(); }
+  } finally { polling = false; pushState(); pushQuota().catch(() => {}); }
 }
 ipcMain.handle('refreshUsage', () => pollUsage());
 ipcMain.handle('openBilling', () => {
@@ -523,7 +523,7 @@ const norm = s => String(s).replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').trim()
 const ADDR_CH = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 function mailAddr(a) {
   if (a.mail && !accounts.some(x => x !== a && x.mail === a.mail)) return a.mail;
-  let code; do { code = '#' + Array.from({ length: 4 }, () => ADDR_CH[Math.floor(Math.random() * ADDR_CH.length)]).join(''); } while (accounts.some(x => x.mail === code));
+  let code; do { code = '#' + Array.from({ length: 4 }, () => ADDR_CH[Math.floor(Math.random() * ADDR_CH.length)]).join(''); } while (code === '#TOOL' || accounts.some(x => x.mail === code));
   a.mail = code; save(); return code;
 }
 function accLabel(a) { const i = accounts.indexOf(a); return `窗口${i + 1}「${a.name}」${mailAddr(a)}`; }
@@ -856,8 +856,42 @@ const site = { ok: false, checkedAt: 0 };
 const siteAddr = a => 'hark.' + mailAddr(a).slice(1);
 function siteProtocolText(acc) {
   const A = siteAddr(acc), W = A.slice(5);
-  const book = accounts.filter(a => /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL)).map((a, i) => `${siteAddr(a)} 「${a.name}」${a.id === acc.id ? '（就是你）' : ''}`).join('\n');
-  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，窗口之间通过 ${SITE} 的传信接口互相写信。你的信箱地址是 ${A}。\n通讯录：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"hark","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
+  const book = accounts.filter(a => /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL)).map((a, i) => `${siteAddr(a)} 「${a.name}」${a.id === acc.id ? '（就是你）' : ''}${quotaText(a)}`).join('\n');
+  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，窗口之间通过 ${SITE} 的传信接口互相写信。你的信箱地址是 ${A}。\n通讯录：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"hark","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。\n\n额度共享：curl -s "${SITE}/api/quota?series=hark" 能看到每个窗口今日 / 本期还剩多少（today_left 是剩余百分比，每 10 分钟更新）。找窗口协作前先查一下，优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文交给额度富裕的窗口，并告诉我。\n\n完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
+}
+// 额度共享：每个 Hark 窗口今日/本期还剩多少，发到网站 /api/quota，所有窗口都能查
+function quotaOf(a) {
+  const u = usage[a.id]; if (!u || !u.buckets || !u.buckets.length) return { today_left: null, period_left: null, today_resets: null };
+  const left = b => b && typeof b.pct === 'number' ? Math.round((100 - b.pct) * 10) / 10 : null;
+  const day = u.buckets.find(b => /daily|day|今日/.test((b.key || '') + (b.label || '')));
+  const per = u.buckets.find(b => b !== day);
+  return { today_left: left(day), period_left: left(per), today_resets: day && day.resets ? String(day.resets) : null, read_at: u.at ? new Date(u.at).toISOString() : null };
+}
+function quotaText(a) {
+  const q = quotaOf(a); if (q.today_left == null && q.period_left == null) return '';
+  return `（今日剩 ${q.today_left ?? '?'}%，本期剩 ${q.period_left ?? '?'}%）`;
+}
+async function sitePost(q, body, token) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
+  try { const r = await require('electron').net.fetch(SITE + q, { method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(body) }); return await r.json().catch(() => null); } catch { return null; } finally { clearTimeout(t); }
+}
+async function pushQuota() {
+  if (!site.ok) return;
+  if (!mail.siteToolToken) { // Hark Tools 自己在网站上的身份：hark.TOOL
+    const j = await sitePost('/api/agent', { name: 'hark', window: 'TOOL', action: 'reclaim', note: 'Hark Tools quota publisher' });
+    if (!j || !j.token) return; mail.siteToolToken = j.token; mailSave();
+  }
+  const windows = accounts.filter(a => /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL)).map(a => ({ address: siteAddr(a), name: a.name, logged_in: !!loginState[a.id], ...quotaOf(a) }));
+  const j = await sitePost('/api/quota', { windows }, mail.siteToolToken);
+  if (j && j.ok === false && /token/i.test(j.error || '')) { mail.siteToolToken = null; mailSave(); }
+  if (j && j.ok && !mail.quotaTaught) { // 网站额度接口第一次可用：告诉每个窗口这条新规则
+    mail.quotaTaught = Date.now();
+    for (const a of accounts) if (loginState[a.id] && /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL)) {
+      const raw = `【Hark Tools 额度共享，请记住】所有 Hark 窗口的额度现在公开共享：curl -s "${SITE}/api/quota?series=hark" 能看到每个窗口今日 / 本期还剩多少（today_left 是剩余百分比，每 10 分钟更新）。找窗口协作前先查一下，优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文写信交给额度富裕的窗口，并告诉我。${quotaText(a) ? '你现在' + quotaText(a) + '。' : ''}收到这条只需回复「好的」。`;
+      mail.letters.push({ id: 'q' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '额度共享说明', body: raw, raw, status: 'queued', note: '', site: true, auto: true });
+    }
+    mailSave(); pushState(); deliverQueue();
+  }
 }
 async function siteGet(q) {
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
@@ -872,7 +906,7 @@ async function sitePoll() {
     return;
   }
   if (!site.ok) {
-    site.ok = true;
+    site.ok = true; setTimeout(() => pushQuota().catch(() => {}), 1000);
     // 第一次切到网站信箱：给所有窗口重发一次新说明
     mail.siteTaught = mail.siteTaught || {};
     for (const a of accounts) if (loginState[a.id] && !mail.siteTaught[a.id] && /^https:\/\/app\.hark\.com/.test(a.url || DEFAULT_URL)) {
@@ -899,7 +933,7 @@ async function sitePoll() {
   for (const [id, ms] of ring) {
     const a = accounts.find(x => x.id === id);
     const lines = ms.map(m => `• 来自 ${m.from}${m.title ? '「' + m.title + '」' : ''}（${m.bytes || 0} 字节）\n  读取：curl -s ${SITE}/api/message/${m.id}`).join('\n');
-    const raw = `📨 你有 ${ms.length} 封新信（收件地址 ${siteAddr(a)}）\n${lines}\n\n读完请 ack：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"。需要回信就用你的 token POST ${SITE}/api/message，to 填对方地址。规则见 ${SITE}/notice.md。`;
+    const raw = `📨 你有 ${ms.length} 封新信（收件地址 ${siteAddr(a)}）\n${lines}\n\n读完请 ack：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"。需要回信就用你的 token POST ${SITE}/api/message，to 填对方地址。规则见 ${SITE}/notice.md。${quotaText(a) ? `\n你现在${quotaText(a)}；要拉别的窗口帮忙先查额度：curl -s "${SITE}/api/quota?series=hark"` : ''}`;
     const L = { id: 'b' + Date.now().toString(36) + id.slice(-3), at: Date.now(), from: null, fromName: ms.length === 1 ? ms[0].from : `${ms.length} 封网站来信`, to: id, toName: a.name, subject: ms.length === 1 ? (ms[0].title || '网站来信') : ms.map(m => m.title || m.from).join('；').slice(0, 60), body: raw, raw, status: 'queued', note: '', site: true };
     mail.letters.push(L);
   }
