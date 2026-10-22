@@ -40,6 +40,10 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
 #menu div:hover{background:var(--raise2)}
 #menu hr{border:0;border-top:1px solid var(--seam);margin:4px 2px}
 #menu .danger{color:var(--rust)}
+#dk{display:none;gap:8px;margin-bottom:12px}
+#dk label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:34px;border-radius:8px;border:1px solid var(--seam);background:var(--ledge);cursor:pointer;font-size:13px;color:var(--haze)}
+#dk label.on{border-color:var(--brass);color:var(--paper);background:var(--raise)}
+#dk input{accent-color:var(--brass)}
 </style></head><body>
 <div class="brand"><div class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="#2A2216"><path d="M4 19c3.5-7 8-11.5 16-14-3 4-4.4 8.3-3.8 14.2C12.4 16.6 8.4 16.7 4 19z"/></svg></div><b>Hark Tools<span>by Miracle AI</span></b></div>
 <button class="nav" id="homeBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>总览</button>
@@ -52,16 +56,31 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
   <div class="tools"><button id="ver" title="检查更新"></button>
   <button class="ib" id="chk" title="检查更新"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></button></div>
 </div>
-<div id="dlg"><div class="box"><div class="t" id="dt"></div><input id="di"><div class="b"><button class="btn" id="dc">取消</button><button class="btn pri" id="do">确定</button></div></div></div>
+<div id="dlg"><div class="box"><div class="t" id="dt"></div><div id="dk"><label class="on"><input type="radio" name="ak" value="hark" checked>Hark</label><label><input type="radio" name="ak" value="muse">Muse</label></div><input id="di"><div class="b"><button class="btn" id="dc">取消</button><button class="btn pri" id="do">确定</button></div></div></div>
 <div id="menu"><div data-a="rename">重命名</div><div data-a="reload">刷新页面</div><div data-a="diag">导出诊断文件</div><hr><div data-a="remove" class="danger">删除并清除登录</div></div>
 <script>
 const TINTS=[['#3B4A5C','#BFD3EA'],['#2F4A47','#A8DCCB'],['#4A3F57','#D6C5EA'],['#55413F','#EBC3B8'],['#504631','#E8D3A2'],['#3C4A35','#C6DDB0']];
 const tint=s=>{let h=0;for(const c of s||'')h=(h*31+c.charCodeAt(0))>>>0;return TINTS[h%TINTS.length]};
-function ask(title,def,cb,withInput=true){const i=di,ok=document.getElementById('do');dt.textContent=title;i.style.display=withInput?'':'none';i.value=def||'';dlg.style.display='flex';
+const MUSE_URL='https://muse.ai';
+function ask(title,def,cb,withInput=true){const i=di,ok=document.getElementById('do');dt.textContent=title;dk.style.display='none';i.style.display=withInput?'':'none';i.value=def||'';dlg.style.display='flex';
  ok.textContent=withInput?'确定':'删除';ok.className='btn '+(withInput?'pri':'danger');if(withInput){i.focus();i.select();}else ok.focus();
  const done=v=>{dlg.style.display='none';ok.onclick=dc.onclick=i.onkeydown=null;if(v!==null)cb(v)};
  ok.onclick=()=>done(withInput?(i.value.trim()||def):true);dc.onclick=()=>done(null);
  i.onkeydown=e=>{if(e.key==='Enter')ok.click();if(e.key==='Escape')dc.click()};}
+function askAdd(cb){
+  const i=di,ok=document.getElementById('do');
+  const defName=k=>' '+(st.accounts.filter(a=>(a.kind==='muse')===(k==='muse')).length+1);
+  const syncName=()=>{const k=dk.querySelector('input:checked').value;const prefix=k==='muse'?'Muse':'Hark';if(!i.dataset.touched||/^Hark \d+$|^Muse \d+$/.test(i.value.trim()))i.value=prefix+defName(k);};
+  dt.textContent='添加账号';dk.style.display='flex';i.style.display='';i.dataset.touched='';i.value='Hark'+defName('hark');
+  dk.querySelectorAll('label').forEach(l=>{l.classList.toggle('on',l.querySelector('input').value==='hark');l.querySelector('input').checked=l.querySelector('input').value==='hark';});
+  dlg.style.display='flex';ok.textContent='确定';ok.className='btn pri';i.focus();i.select();
+  const onKind=()=>{dk.querySelectorAll('label').forEach(l=>l.classList.toggle('on',l.querySelector('input').checked));syncName();};
+  dk.onchange=onKind;i.oninput=()=>{i.dataset.touched='1'};
+  const done=v=>{dlg.style.display='none';ok.onclick=dc.onclick=i.onkeydown=dk.onchange=i.oninput=null;if(v!==null)cb(v)};
+  ok.onclick=()=>{const k=dk.querySelector('input:checked').value;const name=i.value.trim()||((k==='muse'?'Muse':'Hark')+defName(k));done({name,kind:k,url:k==='muse'?MUSE_URL:undefined})};
+  dc.onclick=()=>done(null);
+  i.onkeydown=e=>{if(e.key==='Enter')ok.click();if(e.key==='Escape')dc.click()};
+}
 const daily=a=>{const b=a.usage&&a.usage.buckets&&(a.usage.buckets.find(x=>/day|daily/.test(x.key))||a.usage.buckets[0]);return b&&b.pct!=null?`<span class="q ${b.pct>=90?'hot':''}">${/day|daily/.test(b.key)?'今日':''}已用 ${b.pct}%</span>`:''};
 let st={accounts:[],activeId:null,showHome:false},ctxId=null;
 function render(){
@@ -69,7 +88,7 @@ function render(){
   st.accounts.forEach((a,i)=>{
     const [bg,fg]=tint(a.name);const el=document.createElement('button');
     el.className='acc'+(!st.showHome&&a.id===st.activeId?' on':'');
-    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><b></b><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.loggedIn?'已登录':'未登录'}${daily(a)}</div></div>${i<9?`<span class="key">Ctrl ${i+1}</span>`:''}`;
+    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><b></b><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.kind==='muse'?'Muse · ':''}${a.loggedIn?'已登录':'未登录'}${a.kind==='muse'?'':daily(a)}</div></div>${i<9?`<span class="key">Ctrl ${i+1}</span>`:''}`;
     el.querySelector('.mono-av').textContent=(a.name||'H').trim()[0].toUpperCase();el.querySelector('b').textContent=a.name;
     el.onclick=()=>cockpit.switchTo(a.id);
     el.oncontextmenu=e=>{e.preventDefault();ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-170)+'px';menu.style.top=Math.min(e.clientY,innerHeight-130)+'px';menu.style.display='block'};
@@ -82,9 +101,9 @@ menu.onclick=e=>{e.stopPropagation();menu.style.display='none';const act=e.targe
   if(act==='reload')cockpit.reload(id);
   if(act==='diag')cockpit.exportDiag();
   if(act==='remove')ask(`删除「${a?a.name:''}」并清除它的登录？`,'',()=>cockpit.remove(id),false);};
-add.onclick=()=>ask('给新账号起个名字','Hark '+(st.accounts.length+1),name=>cockpit.add({name}));
+add.onclick=()=>askAdd(o=>cockpit.add(o));
 homeBtn.onclick=()=>cockpit.home();
-// Ctrl 1–9 由主进程统一处理（main.js hookKeys）
+document.addEventListener('keydown',e=>{const n=+e.key;if((e.ctrlKey||e.metaKey)&&n>=1&&n<=9&&st.accounts[n-1])cockpit.switchTo(st.accounts[n-1].id);});
 cockpit.onState(s=>{st=s;render()});cockpit.getState().then(s=>{st=s;render()});
 const showVer=()=>cockpit.version().then(v=>ver.textContent='v'+v);showVer();
 const check=async()=>{ver.textContent='正在检查…';const r=await cockpit.checkUpdate();

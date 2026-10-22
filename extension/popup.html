@@ -1,17 +1,29 @@
 <!doctype html><html lang="zh"><head><meta charset="utf-8">
 <style>
-body{width:280px;margin:0;padding:14px;font:13px -apple-system,"Microsoft YaHei",sans-serif;background:#16181d;color:#e6e6e6}
-h1{font-size:14px;margin:0 0 10px}
-select,input[type=text],button{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #3a3f4b;background:#22252c;color:#fff;margin-bottom:8px;font-size:13px}
-button{background:#2f6fed;border:0;cursor:pointer;font-weight:600}button:disabled{opacity:.5}
-label{display:flex;gap:6px;align-items:center;font-size:12px;opacity:.85;margin-bottom:8px}
+body{width:300px;margin:0;padding:14px;font:13px -apple-system,"Microsoft YaHei",sans-serif;background:#16181d;color:#e6e6e6}
+h1{font-size:14px;margin:0 0 12px;font-weight:600}
+.field{margin-bottom:8px}
+.field>span{display:block;font-size:11px;opacity:.7;margin-bottom:4px}
+select,input[type=text],button.primary{width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #3a3f4b;background:#22252c;color:#fff;font-size:13px}
+button.primary{background:#2f6fed;border:0;cursor:pointer;font-weight:600;margin-top:4px;margin-bottom:8px}button.primary:disabled{opacity:.5}
+.kinds{display:flex;gap:6px}
+.kinds label{flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:7px 0;border-radius:6px;border:1px solid #3a3f4b;background:#22252c;cursor:pointer;font-size:12px;font-weight:600;color:#bbb}
+.kinds label.on{background:#2a3140;border-color:#2f6fed;color:#fff}
+.kinds input{accent-color:#2f6fed}
+label.sync{display:flex;gap:6px;align-items:center;font-size:12px;opacity:.85;margin-bottom:8px}
 #msg{font-size:12px;min-height:16px;line-height:1.5}.err{color:#ff7b7b}.ok{color:#5fd38d}
 </style></head><body>
-<h1>导入到 Hark Cockpit</h1>
-<select id="acc"></select>
+<h1>Hark Cockpit 登录导入</h1>
+<div class="field"><span>产品</span>
+  <div class="kinds" id="kinds">
+    <label class="on"><input type="radio" name="kind" value="hark" checked>Hark</label>
+    <label><input type="radio" name="kind" value="muse">Muse</label>
+  </div>
+</div>
+<div class="field"><span>导入到账号</span><select id="acc"></select></div>
 <input type="text" id="nm" placeholder="新账号名称" style="display:none">
-<button id="go">导入当前浏览器的 Hark 登录</button>
-<label><input type="checkbox" id="sync"> 实时同步到这个账号</label>
+<button class="primary" id="go">导入到账号</button>
+<label class="sync"><input type="checkbox" id="sync"> 实时同步到这个账号</label>
 <div id="msg"></div>
 <script src="common.js"></script><script src="popup.js"></script>
 </body></html>

@@ -1,4 +1,4 @@
-// Hark Cockpit: 每个 Hark 账号一个独立的持久化会话（cookie/登录态互不干扰），侧栏一键切换。
+﻿// Hark Cockpit: 每个 Hark 账号一个独立的持久化会话（cookie/登录态互不干扰），侧栏一键切换。
 const { app, BaseWindow, WebContentsView, ipcMain, session, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -7,18 +7,37 @@ const http = require('http');
 const SIDEBAR_W = 264;
 const TOOLBAR_H = 52;
 const DEFAULT_URL = 'https://app.hark.com';
+const MUSE_URL = 'https://muse.ai';
+const URLS = { hark: DEFAULT_URL, muse: MUSE_URL };
+
+function normalizeKind(kind, url) {
+  const k = String(kind || '').toLowerCase();
+  if (k === 'muse' || k === 'hark') return k;
+  if (url && /muse\.ai/i.test(String(url))) return 'muse';
+  return 'hark';
+}
+function urlForKind(kind) { return URLS[normalizeKind(kind)] || DEFAULT_URL; }
+function isMuseAccount(a) { return normalizeKind(a && a.kind, a && a.url) === 'muse'; }
+
 // 去掉 Electron 标识，降低 Google 登录拦截“此浏览器不安全”的概率
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 const store = path.join(app.getPath('userData'), 'accounts.json');
-let accounts = [];      // [{id, name, url}]
+let accounts = [];      // [{id, name, url, kind:'hark'|'muse'}]
 let activeId = null;
 const views = new Map(); // id -> WebContentsView
 let win, sidebar, home, toolbar;
 let showHome = false;
 
 function load() {
-  try { const d = JSON.parse(fs.readFileSync(store, 'utf8')); accounts = d.accounts || []; activeId = d.activeId; } catch { accounts = []; }
+  try {
+    const d = JSON.parse(fs.readFileSync(store, 'utf8'));
+    accounts = (d.accounts || []).map(a => {
+      const kind = normalizeKind(a.kind, a.url);
+      return { ...a, kind, url: a.url || urlForKind(kind) };
+    });
+    activeId = d.activeId;
+  } catch { accounts = []; }
 }
 function save() { fs.writeFileSync(store, JSON.stringify({ accounts, activeId }, null, 2)); }
 
@@ -48,7 +67,7 @@ function getView(acc) {
   hookKeys(v.webContents);
   // Google OAuth 等弹窗留在同一会话内，其他外链用系统浏览器打开
   v.webContents.setWindowOpenHandler(({ url }) => {
-    if (/accounts\.google\.com|hark\.com|appleid\.apple\.com|login\.microsoftonline\.com/.test(url)) {
+    if (/accounts\.google\.com|hark\.com|muse\.ai|auth\.muse\.ai|auth\.meta\.com|accountscenter\.meta\.com|facebook\.com|instagram\.com|appleid\.apple\.com|login\.microsoftonline\.com/.test(url)) {
       return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, webPreferences: { partition: partitionOf(acc.id) } } };
     }
     shell.openExternal(url);
@@ -58,7 +77,7 @@ function getView(acc) {
   v.webContents.on('did-finish-load', () => pushState());
   v.webContents.on('did-navigate-in-page', () => pushState());
   watchUsage(acc, v.webContents);
-  v.webContents.loadURL(acc.url || DEFAULT_URL);
+  v.webContents.loadURL(acc.url || urlForKind(acc.kind));
   views.set(acc.id, v);
   return v;
 }
@@ -84,17 +103,35 @@ function activate(id) {
 
 function showOverview() { showHome = true; layout(); pushState(); home?.webContents.focus(); }
 
-// 登录状态：分区里存在 hark.com 的 session cookie 即视为已登录
+// 登录状态：Hark 看 hark.com session；Muse 看 muse.ai 的 hatch_* 会话 cookie
 const loginState = {};
+// Muse 登录凭证：分区里 .muse.ai 的 hatch_sess / hatch_gw / hatch_vml / hatch_native_auth_device
+// （实测登录后一定有 hatch_sess；仅匹配 session|sess 在部分部署会漏判）
+function isMuseLoginCookie(c) {
+  const host = String(c.domain || '').replace(/^\./, '');
+  if (!/(^|\.)muse\.ai$/.test(host)) return false;
+  const n = String(c.name || '');
+  if (/^(hatch_sess|hatch_gw|hatch_vml|hatch_native_auth_device)$/i.test(n)) return true;
+  // 其它 hatch_* 业务 cookie；排除 Meta/CF 噪音
+  if (/^hatch_/i.test(n) && !/^(hatch_cf|hatch_theme)/i.test(n)) return true;
+  return false;
+}
 async function refreshStatus() {
   await Promise.all(accounts.map(async a => {
     try {
       const cs = await session.fromPartition(partitionOf(a.id)).cookies.get({});
-      loginState[a.id] = cs.some(c => /(^|\.)hark\.com$/.test(c.domain.replace(/^\./, '')) && /session/i.test(c.name));
+      if (isMuseAccount(a)) {
+        loginState[a.id] = cs.some(isMuseLoginCookie);
+      } else {
+        loginState[a.id] = cs.some(c => {
+          const host = c.domain.replace(/^\./, '');
+          return /(^|\.)hark\.com$/.test(host) && /session/i.test(c.name);
+        });
+      }
     } catch { loginState[a.id] = false; }
   }));
 }
-function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], usage: usage[a.id] || null })), activeId, showHome, usageReady: !!usageCfg.url }; }
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], usage: usage[a.id] || null, kind: normalizeKind(a.kind, a.url) })), activeId, showHome, usageReady: !!usageCfg.url || accounts.some(a => isMuseAccount(a) && loginState[a.id]) }; }
 let pushT;
 function pushState() {
   clearTimeout(pushT);
@@ -108,8 +145,14 @@ function pushState() {
   }, 60);
 }
 
-ipcMain.handle('add', (_e, { name, url }) => {
-  const acc = { id: Date.now().toString(36), name: name || `Hark ${accounts.length + 1}`, url: url || DEFAULT_URL };
+ipcMain.handle('add', (_e, { name, url, kind }) => {
+  const k = normalizeKind(kind, url);
+  const acc = {
+    id: Date.now().toString(36),
+    name: name || `${k === 'muse' ? 'Muse' : 'Hark'} ${accounts.filter(a => normalizeKind(a.kind, a.url) === k).length + 1}`,
+    url: url || urlForKind(k),
+    kind: k,
+  };
   accounts.push(acc); save(); activate(acc.id); return acc;
 });
 ipcMain.handle('switch', (_e, id) => activate(id));
@@ -216,6 +259,7 @@ function parseUsage(obj) {
 }
 const SKIP_HEADERS = /^(cookie|host|content-length|accept-encoding|connection|origin|referer|sec-|user-agent|:)/i;
 function watchUsage(acc, wc) {
+  if (isMuseAccount(acc)) return;
   try { wc.debugger.attach('1.3'); } catch { return; }
   const reqs = new Map();
   wc.debugger.sendCommand('Network.enable').catch(() => {});
@@ -284,9 +328,172 @@ async function fetchUsage(acc) {
   } catch (e) { usage[acc.id] = { ...(usage[acc.id] || {}), error: '网络错误' }; }
 }
 let polling = false;
+// ===== Muse 额度：Settings → 通用 → 使用情况（Next.js server action，非公开 REST）=====
+// POST https://muse.ai/  + header next-action=<deploy-specific id>
+// body: [{"includeAgreement":true}]  → RSC flight 行里 subscription.usage.percentUsed / topup*
+const museUsageStore = path.join(app.getPath('userData'), 'muse-usage.json');
+const MUSE_ACTION_KNOWN = '4029ac5c4bd03136487d91ebde5de39c64b35229b4';
+let museActionId = null;
+try { museActionId = JSON.parse(fs.readFileSync(museUsageStore, 'utf8')).actionID || null; } catch {}
+function saveMuseAction(id) {
+  museActionId = id || null;
+  try { fs.writeFileSync(museUsageStore, JSON.stringify({ actionID: museActionId, at: Date.now() }, null, 2)); } catch {}
+}
+function museChunkPaths(text) {
+  return [...new Set((String(text).match(/static\/chunks\/[\w~.-]+\.js/g) || []).map(p => '/_next/' + p))];
+}
+async function museGet(ses, url, headers = {}) {
+  const res = await ses.fetch(url, { headers: { 'user-agent': UA, ...headers }, credentials: 'include' });
+  const text = await res.text();
+  return { status: res.status, text, url: res.url };
+}
+async function discoverMuseAction(ses) {
+  const page = await museGet(ses, MUSE_URL + '/', { accept: 'text/html' });
+  if (page.status === 401 || page.status === 403 || /auth\.muse\.ai/i.test(page.url || '')) return null;
+  if (page.status !== 200) throw new Error('muse page ' + page.status);
+  const paths = museChunkPaths(page.text).slice(0, 96);
+  let text = '';
+  for (let i = 0; i < paths.length; i += 8) {
+    const batch = paths.slice(i, i + 8);
+    const bodies = await Promise.all(batch.map(p => museGet(ses, MUSE_URL + p, { accept: '*/*' }).then(r => r.status === 200 ? r.text : '').catch(() => '')));
+    text += '\n' + bodies.join('\n');
+    const module = /\.A\((\d+)\)\.then\(\(\{[^}]*Settings/.exec(text)?.[1];
+    if (!module) continue;
+    const loader = new RegExp(`[,{\\[]${module},\\w+=>\\{\\w+\\.v\\(\\w+=>Promise\\.all\\(\\[([^\\]]*)`).exec(text);
+    if (!loader) continue;
+    const settingsPaths = museChunkPaths(loader[1]).slice(0, 32);
+    for (let j = 0; j < settingsPaths.length; j += 8) {
+      const sb = await Promise.all(settingsPaths.slice(j, j + 8).map(p => museGet(ses, MUSE_URL + p, { accept: '*/*' }).then(r => r.status === 200 ? r.text : '').catch(() => '')));
+      for (const body of sb) {
+        const id = /"([0-9a-f]{40,})",[^"]{0,200}"fetchSubscriptionAction"/.exec(body)?.[1];
+        if (id) return id;
+      }
+    }
+    break;
+  }
+  const fallback = /"([0-9a-f]{40,})",[^"]{0,200}"fetchSubscriptionAction"/.exec(text)?.[1];
+  return fallback || null;
+}
+async function postMuseSubscription(ses, actionID) {
+  const res = await ses.fetch(MUSE_URL + '/', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'user-agent': UA,
+      accept: 'text/x-component',
+      'content-type': 'text/plain;charset=UTF-8',
+      'next-action': actionID,
+      origin: MUSE_URL,
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-dest': 'empty',
+    },
+    body: JSON.stringify([{ includeAgreement: true }]),
+  });
+  const text = await res.text();
+  return { status: res.status, text };
+}
+function parseMuseFlight(bodyText) {
+  let sub = null;
+  for (const line of String(bodyText).split('\n')) {
+    try {
+      const m = /^[0-9a-f]+:(\{.*\})\s*$/.exec(line);
+      if (!m) continue;
+      const row = JSON.parse(m[1]);
+      if (row && row.success === true && row.subscription) sub = row.subscription;
+    } catch {}
+  }
+  return sub;
+}
+function tokensLeftNote(label) {
+  const m = /\(([^()]*词元[^()]*)\)|\(([^()]+ tokens left)\)/i.exec(label || '');
+  return (m && (m[1] || m[2])) || null;
+}
+function pctFromLabel(label) {
+  const m = /已使用\s*([\d.]+)\s*%|([\d.]+)\s*%\s*used/i.exec(label || '');
+  return m ? num(m[1] || m[2]) : null;
+}
+function museBuckets(sub) {
+  const buckets = [];
+  const u = sub.usage || {};
+  const pct = num(u.percentUsed);
+  const resetsSec = num(u.resetsAt);
+  buckets.push({
+    key: 'weekly',
+    label: sub.usageRowLabel || sub.tier?.name || '免费版',
+    pct: pct == null ? 0 : Math.max(0, Math.min(100, pct)),
+    used: null,
+    limit: null,
+    resets: resetsSec != null ? resetsSec * 1000 : null,
+    note: sub.usageRowValueLabel || (pct != null ? `已使用 ${pct}%` : null),
+  });
+  const bal = num(sub.topupBalance), tot = num(sub.topupTotal);
+  if (tot != null && tot > 0) {
+    let tp = pctFromLabel(sub.topupRowValueLabel);
+    if (tp == null && bal != null) tp = Math.max(0, Math.min(100, Math.round((tot - bal) / tot * 1000) / 10));
+    buckets.push({
+      key: 'topup',
+      label: sub.topupRowLabel || '额外额度',
+      pct: tp == null ? 0 : tp,
+      used: null,
+      limit: null,
+      resets: null,
+      note: tokensLeftNote(sub.topupRowValueLabel) || sub.topupRowValueLabel || null,
+    });
+  }
+  return buckets;
+}
+async function fetchMuseUsage(acc) {
+  try {
+    const ses = session.fromPartition(partitionOf(acc.id));
+    let actionID = museActionId || MUSE_ACTION_KNOWN;
+    let res = actionID ? await postMuseSubscription(ses, actionID) : null;
+    const stale = res && res.status === 404 && /server action not found/i.test(res.text);
+    const signedOut = res && (res.status === 401 || res.status === 403 || /auth\.muse\.ai/i.test(res.text));
+    if (!res || stale || signedOut) {
+      if (stale) saveMuseAction(null);
+      actionID = await discoverMuseAction(ses);
+      if (!actionID) {
+        usage[acc.id] = { at: Date.now(), buckets: [], error: signedOut ? '未登录' : '找不到额度接口' };
+        return;
+      }
+      res = await postMuseSubscription(ses, actionID);
+      if (res.status === 404 && /server action not found/i.test(res.text)) {
+        usage[acc.id] = { at: Date.now(), buckets: [], error: '额度接口已变更' };
+        return;
+      }
+    }
+    if (res.status === 401 || res.status === 403) {
+      usage[acc.id] = { at: Date.now(), buckets: [], error: '未登录' };
+      return;
+    }
+    if (res.status !== 200) {
+      usage[acc.id] = { ...(usage[acc.id] || {}), error: '读取失败 ' + res.status };
+      return;
+    }
+    const sub = parseMuseFlight(res.text);
+    if (!sub || typeof sub.usage?.percentUsed !== 'number') {
+      usage[acc.id] = { at: Date.now(), buckets: [], error: '没有额度数据' };
+      return;
+    }
+    saveMuseAction(actionID);
+    usage[acc.id] = { at: Date.now(), buckets: museBuckets(sub) };
+  } catch (e) {
+    usage[acc.id] = { ...(usage[acc.id] || {}), error: '网络错误' };
+  }
+}
+
 async function pollUsage() {
-  if (polling || !usageCfg.url) return; polling = true;
-  try { await refreshStatus(); await Promise.all(accounts.filter(a => loginState[a.id]).map(fetchUsage)); } finally { polling = false; pushState(); }
+  const hasHark = !!usageCfg.url;
+  const hasMuse = accounts.some(a => isMuseAccount(a));
+  if (polling || (!hasHark && !hasMuse)) return; polling = true;
+  try {
+    await refreshStatus();
+    await Promise.all(accounts.filter(a => loginState[a.id]).map(a => {
+      if (isMuseAccount(a)) return fetchMuseUsage(a);
+      return hasHark ? fetchUsage(a) : null;
+    }));
+  } finally { polling = false; pushState(); }
 }
 ipcMain.handle('refreshUsage', () => pollUsage());
 ipcMain.handle('openBilling', () => {
@@ -334,7 +541,7 @@ async function importCookies(accId, cookies) {
   for (const c of cookies || []) {
     try {
       const host = String(c.domain || '').replace(/^\./, '');
-      if (!/(^|\.)hark\.com$/.test(host)) continue;
+      if (!/(^|\.)hark\.com$/.test(host) && !/(^|\.)muse\.ai$/.test(host)) continue;
       const d = { url: `https://${host}${c.path || '/'}`, name: c.name, value: c.value, path: c.path || '/',
         secure: !!c.secure, httpOnly: !!c.httpOnly };
       if (!c.hostOnly && !c.name.startsWith('__Host-')) d.domain = c.domain;
@@ -355,18 +562,38 @@ function startBridge() {
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     const json = (code, o) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
-    if (req.method === 'GET' && req.url === '/accounts') return json(200, { accounts: accounts.map(a => ({ id: a.id, name: a.name })), activeId });
+    if (req.method === 'GET' && req.url === '/accounts') return json(200, { accounts: accounts.map(a => ({ id: a.id, name: a.name, kind: normalizeKind(a.kind, a.url) })), activeId });
     if (req.method === 'POST' && req.url === '/import') {
       let body = ''; req.on('data', d => { body += d; if (body.length > 2e6) req.destroy(); });
       req.on('end', async () => {
         try {
-          const { accountId, cookies, newName, silent } = JSON.parse(body || '{}');
+          const { accountId, cookies, newName, silent, kind } = JSON.parse(body || '{}');
           let id = accountId;
-          if (!id || id === '__new__') { const acc = { id: Date.now().toString(36), name: newName || `Hark ${accounts.length + 1}`, url: DEFAULT_URL }; accounts.push(acc); save(); id = acc.id; }
+          const k = normalizeKind(kind);
+          if (!id || id === '__new__') {
+            const nCount = accounts.filter(a => normalizeKind(a.kind, a.url) === k).length + 1;
+            const acc = {
+              id: Date.now().toString(36),
+              name: newName || `${k === 'muse' ? 'Muse' : 'Hark'} ${nCount}`,
+              url: urlForKind(k),
+              kind: k,
+            };
+            accounts.push(acc); save(); id = acc.id;
+          } else if (kind) {
+            const existing = accounts.find(a => a.id === id);
+            if (existing) {
+              const nk = normalizeKind(kind, existing.url);
+              if (normalizeKind(existing.kind, existing.url) !== nk) {
+                existing.kind = nk;
+                existing.url = urlForKind(nk);
+                save();
+              }
+            }
+          }
           const n = await importCookies(id, cookies);
           const acc = accounts.find(a => a.id === id);
           const v = views.get(id);
-          if (v && !silent) v.webContents.loadURL(acc.url || DEFAULT_URL);
+          if (v && !silent) v.webContents.loadURL(acc.url || urlForKind(acc.kind));
           if (!silent) { activate(id); win.show(); win.focus(); toast(`已从浏览器导入「${acc.name}」的登录`); }
           pushState();
           json(200, { ok: true, count: n, accountId: id });
