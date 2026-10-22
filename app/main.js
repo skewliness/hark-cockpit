@@ -89,6 +89,41 @@ function getView(acc) {
   return v;
 }
 
+// —— 项目收信：信不投进「聊天」，而是投进这个账号指定的项目对话 ——
+// 同一登录分区开一个隐藏页面停在项目地址，不动你正在看的页面
+const inboxViews = new Map();
+function isProjectUrl(url) { try { const u = new URL(url); return collabUrlOk(url) && u.pathname.replace(/\/+$/, '') !== ''; } catch { return false; } }
+function inboxView(acc) {
+  if (!acc.inboxUrl) return null;
+  let v = inboxViews.get(acc.id);
+  if (v && !v.webContents.isDestroyed()) return v;
+  const v2 = new WebContentsView({ webPreferences: { partition: partitionOf(acc.id), contextIsolation: true, backgroundThrottling: false } });
+  v2.setVisible(false);
+  win.contentView.addChildView(v2);
+  { const [w, h] = win.getContentSize(); v2.setBounds({ x: SIDEBAR_W, y: TOOLBAR_H, width: Math.max(0, w - SIDEBAR_W), height: Math.max(0, h - TOOLBAR_H) }); }
+  v2.webContents.setUserAgent(UA);
+  v2.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  v2.webContents.loadURL(acc.inboxUrl);
+  inboxViews.set(acc.id, v2);
+  return v2;
+}
+function dropInboxView(id) {
+  const v = inboxViews.get(id); if (!v) return;
+  try { win.contentView.removeChildView(v); v.webContents.close(); } catch {}
+  inboxViews.delete(id);
+}
+// 收信目标：设了项目就投项目，否则投聊天（账号主页面）
+function deliveryWc(acc) {
+  const iv = inboxView(acc);
+  if (iv) {
+    // 页面跑偏（被跳回聊天等）时拉回项目
+    const cur = iv.webContents.getURL();
+    if (!iv.webContents.isLoading() && cur && collabUrlOk(cur) && !cur.startsWith(acc.inboxUrl)) iv.webContents.loadURL(acc.inboxUrl);
+    return iv.webContents;
+  }
+  return getView(acc).webContents;
+}
+
 function layout() {
   const [w, h] = win.getContentSize();
   sidebar.setBounds({ x: 0, y: 0, width: SIDEBAR_W, height: h });
@@ -97,6 +132,7 @@ function layout() {
   // 所有账号窗口始终保持同样大小，切换时只改可见性：不触发页面重排，切换几乎是瞬间的
   if (home) { home.setBounds(main); home.setVisible(!!showHome); }
   for (const [id, v] of views) { v.setBounds(main); v.setVisible(!showHome && id === activeId); }
+  for (const v of inboxViews.values()) { v.setBounds(main); v.setVisible(false); }
 }
 
 function activate(id) {
@@ -148,11 +184,20 @@ ipcMain.handle('add', (_e, { name, url, kind }) => {
   accounts.push(acc); save(); activate(acc.id); return acc;
 });
 ipcMain.handle('switch', (_e, id) => activate(id));
+ipcMain.handle('setInbox', (_e, { id, mode }) => {
+  const a = accounts.find(x => x.id === id); if (!a) return { ok: false };
+  if (mode === 'chat') { delete a.inboxUrl; dropInboxView(id); save(); pushState(); toast(`信箱：${a.name} 改回在聊天收信`); return { ok: true }; }
+  const url = views.get(id)?.webContents.getURL() || '';
+  if (!isProjectUrl(url)) { toast(`信箱：先在「${a.name}」里打开要收信的项目，再点这个`); return { ok: false, error: 'not-project' }; }
+  a.inboxUrl = url.split('#')[0]; dropInboxView(id); save(); pushState(); toast(`信箱：${a.name} 以后在这个项目里收信`);
+  return { ok: true, url: a.inboxUrl };
+});
 ipcMain.handle('rename', (_e, { id, name }) => { const a = accounts.find(x => x.id === id); if (a) { a.name = name; save(); pushState(); } });
 ipcMain.handle('reload', (_e, id) => views.get(id)?.webContents.reload());
 ipcMain.handle('remove', async (_e, id) => {
   const v = views.get(id);
   if (v) { win.contentView.removeChildView(v); v.webContents.close(); views.delete(id); }
+  dropInboxView(id);
   await session.fromPartition(partitionOf(id)).clearStorageData(); // 删除账号时一并清除其登录态
   accounts = accounts.filter(a => a.id !== id);
   if (activeId === id) activeId = accounts[0]?.id || null;
@@ -470,7 +515,7 @@ async function deliverQueue() {
     for (const L of mail.letters.filter(x => x.status === 'queued')) {
       const acc = accounts.find(a => a.id === L.to);
       if (!acc) { L.status = 'failed'; L.note = '收件窗口已删除'; continue; }
-      const v = getView(acc), wc = v.webContents;
+      const wc = deliveryWc(acc);
       let r = 'no-composer';
       if (!isCollabAccount(acc)) { L.status = 'failed'; L.note = '该窗口不参与信箱协同'; continue; }
       if ((L.files || []).length) {
@@ -699,12 +744,11 @@ function siteBook(me) {
 }
 function siteProtocolText(acc) {
   const A = siteAddr(acc), ser = siteSeries(acc), W = A.slice(ser.length + 1);
-  const book = siteBook(acc);
-  return `agent.miracleai.club 是我自己搭的，我的几个窗口用它互相传信。\n\n【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，窗口之间通过 ${SITE} 的传信接口互相写信。你是 ${ser}，信箱地址是 ${A}。\n通讯录（含对方窗口地址，协作前先看额度再选人）：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"${ser}","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。\n\n额度共享：\ncurl -s "${SITE}/api/quota?series=hark"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的窗口，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文交给额度富裕的窗口，并告诉我。\n\n完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
+  // 通讯录常驻网站（/api/quota 列出全部已登记窗口），说明里不再附整份名单和长命令
+  return `agent.miracleai.club 是我自己搭的站，我的几个 Hark 窗口用它互相传信。你的地址是 ${A}。\n通讯录和各窗口额度都在网站上：curl -s "${SITE}/api/quota?series=hark"\n要用信箱时：先 POST ${SITE}/api/agent {"name":"${ser}","window":"${W}"} 拿 token 存好，写信、读信、已读的用法见 ${SITE}/notice.md。有信时我会在这里告诉你信的 id。\n收到回复「好的」就行。`;
 }
 function quotaTeachText(acc) {
-  const book = siteBook(acc);
-  return `【Hark Tools 额度共享，请记住】Hark 窗口的额度公开共享，找人协作前先查板再选地址：\ncurl -s "${SITE}/api/quota?series=hark"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文写信交给额度富裕的窗口，并告诉我。${quotaText(acc) ? '你现在' + quotaText(acc) + '。' : ''}\n当前通讯录：\n${book}\n收到这条只需回复「好的」。`;
+  return `各 Hark 窗口的额度在 ${SITE}/api/quota?series=hark（today_left 为今日剩余百分比），找窗口协作时挑额度多的。收到回复「好的」就行。`;
 }
 // 额度共享：每个协同窗口今日/本期还剩多少，按系列发到网站 /api/quota
 function quotaOf(a) {
