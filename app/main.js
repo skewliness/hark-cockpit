@@ -19,7 +19,7 @@ function normalizeKind(kind, url) {
 function urlForKind(kind) { return URLS[normalizeKind(kind)] || DEFAULT_URL; }
 function isMuseAccount(a) { return normalizeKind(a && a.kind, a && a.url) === 'muse'; }
 function isCollabAccount(a) { const k = normalizeKind(a && a.kind, a && a.url); return k === 'hark' || k === 'muse'; }
-function siteSeries(a) { return isMuseAccount(a) ? 'muse' : 'hark'; }
+function siteSeries(a) { return isMuseAccount(a) ? 'mu' : 'hark'; }
 function collabUrlOk(url) { return /^https:\/\/app\.hark\.com/.test(url || '') || /^https:\/\/(www\.)?muse\.ai(\/|$|\?|#)/.test(url || ''); }
 // 去掉 Electron 标识，降低 Google 登录拦截“此浏览器不安全”的概率
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -882,11 +882,11 @@ function siteBook(me) {
 function siteProtocolText(acc) {
   const A = siteAddr(acc), ser = siteSeries(acc), W = A.slice(ser.length + 1);
   const book = siteBook(acc);
-  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 和 Muse 窗口，窗口之间通过 ${SITE} 的传信接口互相写信（跨系列也能写信）。你是 ${ser}，信箱地址是 ${A}。\n通讯录（含对方窗口地址，协作前先看额度再选人）：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"${ser}","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD 或 muse.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。\n\n额度共享（两块板都要看，才能知道该找谁协作）：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=muse"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的窗口，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文交给额度富裕的窗口（可以是另一系列），并告诉我。\n\n完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
+  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 和 mu 窗口，窗口之间通过 ${SITE} 的传信接口互相写信（跨系列也能写信）。你是 ${ser}，信箱地址是 ${A}。\n通讯录（含对方窗口地址，协作前先看额度再选人）：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"${ser}","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD 或 mu.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。\n\n额度共享（两块板都要看，才能知道该找谁协作）：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的窗口，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文交给额度富裕的窗口（可以是另一系列），并告诉我。\n\n完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
 }
 function quotaTeachText(acc) {
   const book = siteBook(acc);
-  return `【Hark Tools 额度共享，请记住】Hark 与 Muse 窗口的额度都公开共享，找人协作前先查板再选地址：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=muse"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文写信交给额度富裕的窗口（可跨系列），并告诉我。${quotaText(acc) ? '你现在' + quotaText(acc) + '。' : ''}\n当前通讯录：\n${book}\n收到这条只需回复「好的」。`;
+  return `【Hark Tools 额度共享，请记住】Hark 与 mu 窗口的额度都公开共享，找人协作前先查板再选地址：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文写信交给额度富裕的窗口（可跨系列），并告诉我。${quotaText(acc) ? '你现在' + quotaText(acc) + '。' : ''}\n当前通讯录：\n${book}\n收到这条只需回复「好的」。`;
 }
 // 额度共享：每个协同窗口今日/本期还剩多少，按系列发到网站 /api/quota
 function quotaOf(a) {
@@ -908,7 +908,8 @@ async function sitePost(q, body, token) {
   try { const r = await require('electron').net.fetch(SITE + q, { method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(body) }); return await r.json().catch(() => null); } catch { return null; } finally { clearTimeout(t); }
 }
 async function ensureSiteToolToken(series) {
-  const key = series === 'muse' ? 'siteToolTokenMuse' : 'siteToolToken';
+  const key = series === 'mu' ? 'siteToolTokenMu' : 'siteToolToken';
+  if (series === 'mu' && !mail[key] && mail.siteToolTokenMuse) { mail[key] = mail.siteToolTokenMuse; mailSave(); }
   if (mail[key]) return mail[key];
   const j = await sitePost('/api/agent', { name: series, window: 'TOOL', action: 'reclaim', note: 'Hark Tools quota publisher' });
   if (!j || !j.token) return null;
@@ -916,25 +917,25 @@ async function ensureSiteToolToken(series) {
 }
 async function pushQuota() {
   if (!site.ok) return;
-  for (const series of ['hark', 'muse']) {
+  for (const series of ['hark', 'mu']) {
     const token = await ensureSiteToolToken(series);
     if (!token) continue;
     const windows = accounts.filter(a => isCollabAccount(a) && siteSeries(a) === series).map(a => ({ address: siteAddr(a), name: a.name, logged_in: !!loginState[a.id], ...quotaOf(a) }));
     const j = await sitePost('/api/quota', { windows }, token);
-    if (j && j.ok === false && /token/i.test(j.error || '')) { mail[series === 'muse' ? 'siteToolTokenMuse' : 'siteToolToken'] = null; mailSave(); }
+    if (j && j.ok === false && /token/i.test(j.error || '')) { mail[series === 'mu' ? 'siteToolTokenMu' : 'siteToolToken'] = null; mailSave(); }
   }
-  // collabTeachVer=2：Hark+Muse 协同 + 双系列额度板（升级后给所有已登录协同窗口重发说明）
-  if ((mail.collabTeachVer || 0) < 2) {
-    mail.collabTeachVer = 2;
+  // collabTeachVer=3：系列 muse 改名 mu（升级后给所有已登录协同窗口重发说明）
+  if ((mail.collabTeachVer || 0) < 3) {
+    mail.collabTeachVer = 3;
     mail.siteTaught = mail.siteTaught || {};
     mail.taught = mail.taught || {};
     mail.quotaTaught = Date.now();
     for (const a of accounts) if (loginState[a.id] && isCollabAccount(a)) {
       mail.siteTaught[a.id] = Date.now();
       mail.taught[a.id] = Date.now();
-      mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明（Hark+Muse 协同）', body: '', status: 'queued', note: '', teach: true, auto: true });
+      mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明（Hark+mu 协同）', body: '', status: 'queued', note: '', teach: true, auto: true });
       const raw = quotaTeachText(a);
-      mail.letters.push({ id: 'q' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '额度共享说明（含 Muse）', body: raw, raw, status: 'queued', note: '', site: true, auto: true });
+      mail.letters.push({ id: 'q' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '额度共享说明（含 mu）', body: raw, raw, status: 'queued', note: '', site: true, auto: true });
     }
     mailSave(); pushState(); deliverQueue();
   }
@@ -948,7 +949,7 @@ async function sitePoll() {
   const fresh = mail.siteSeq == null;
   const seq = fresh ? 0 : mail.siteSeq;
   const jH = await siteGet(`/api/message?to_prefix=hark.&since_seq=${seq}&limit=100`);
-  const jM = await siteGet(`/api/message?to_prefix=muse.&since_seq=${seq}&limit=100`);
+  const jM = await siteGet(`/api/message?to_prefix=mu.&since_seq=${seq}&limit=100`);
   const hasH = jH && typeof jH.next_seq === 'number';
   const hasM = jM && typeof jM.next_seq === 'number';
   if (!hasH && !hasM) { // 网站还没上线窗口级地址：继续用页面抓信
@@ -971,18 +972,18 @@ async function sitePoll() {
   // 网站把 since_seq=0 当作“只建游标”：游标停在 0 会永远收不到第一封，这里改从完整列表补
   if (mail.siteSeq === 0 && next > 0 && !messages.length) {
     const all = await siteGet('/api/message');
-    messages = ((all && all.messages) || []).filter(m => Number(m.seq) > 0 && Number(m.seq) <= next && (m.to === 'all' || m.to === 'hark' || m.to === 'muse' || /^hark\./.test(m.to || '') || /^muse\./.test(m.to || ''))).sort((x, y) => x.seq - y.seq);
+    messages = ((all && all.messages) || []).filter(m => Number(m.seq) > 0 && Number(m.seq) <= next && (m.to === 'all' || m.to === 'hark' || m.to === 'mu' || /^hark\./.test(m.to || '') || /^mu\./.test(m.to || ''))).sort((x, y) => x.seq - y.seq);
   }
   const collab = accounts.filter(isCollabAccount);
   const ring = new Map(); // accId -> [msg]
   for (const m of messages) {
     let targets = [];
     const wh = /^hark\.([A-Z]{4})$/.exec(m.to || '');
-    const wm = /^muse\.([A-Z]{4})$/.exec(m.to || '');
+    const wm = /^mu\.([A-Z]{4})$/.exec(m.to || '');
     if (wh) targets = collab.filter(a => siteSeries(a) === 'hark' && mailAddr(a) === '#' + wh[1]);
-    else if (wm) targets = collab.filter(a => siteSeries(a) === 'muse' && mailAddr(a) === '#' + wm[1]);
+    else if (wm) targets = collab.filter(a => siteSeries(a) === 'mu' && mailAddr(a) === '#' + wm[1]);
     else if (m.to === 'hark') targets = collab.filter(a => siteSeries(a) === 'hark' && loginState[a.id]);
-    else if (m.to === 'muse') targets = collab.filter(a => siteSeries(a) === 'muse' && loginState[a.id]);
+    else if (m.to === 'mu') targets = collab.filter(a => siteSeries(a) === 'mu' && loginState[a.id]);
     else if (m.to === 'all') targets = collab.filter(a => loginState[a.id]);
     targets = targets.filter(a => siteAddr(a) !== m.from); // 不提醒发信人自己
     for (const a of targets) { if (!ring.has(a.id)) ring.set(a.id, []); ring.get(a.id).push(m); }
@@ -990,7 +991,7 @@ async function sitePoll() {
   for (const [id, ms] of ring) {
     const a = accounts.find(x => x.id === id);
     const lines = ms.map(m => `• 来自 ${m.from}${m.title ? '「' + m.title + '」' : ''}（${m.bytes || 0} 字节）\n  读取：curl -s ${SITE}/api/message/${m.id}`).join('\n');
-    const raw = `📨 你有 ${ms.length} 封新信（收件地址 ${siteAddr(a)}）\n${lines}\n\n读完请 ack：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"。需要回信就用你的 token POST ${SITE}/api/message，to 填对方地址（hark.XXXX 或 muse.XXXX）。规则见 ${SITE}/notice.md。${quotaText(a) ? `\n你现在${quotaText(a)}；要拉别的窗口帮忙先查额度：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=muse"` : ''}`;
+    const raw = `📨 你有 ${ms.length} 封新信（收件地址 ${siteAddr(a)}）\n${lines}\n\n读完请 ack：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"。需要回信就用你的 token POST ${SITE}/api/message，to 填对方地址（hark.XXXX 或 mu.XXXX）。规则见 ${SITE}/notice.md。${quotaText(a) ? `\n你现在${quotaText(a)}；要拉别的窗口帮忙先查额度：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"` : ''}`;
     const L = { id: 'b' + Date.now().toString(36) + id.slice(-3), at: Date.now(), from: null, fromName: ms.length === 1 ? ms[0].from : `${ms.length} 封网站来信`, to: id, toName: a.name, subject: ms.length === 1 ? (ms[0].title || '网站来信') : ms.map(m => m.title || m.from).join('；').slice(0, 60), body: raw, raw, status: 'queued', note: '', site: true };
     mail.letters.push(L);
   }
