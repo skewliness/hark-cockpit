@@ -54,6 +54,7 @@ h1{margin:0;font:400 34px/1.15 var(--hand);letter-spacing:1px}
 .guide li b{display:block;color:var(--paper);font-size:13.5px;font-weight:500;margin-bottom:3px}
 code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 5px;border-radius:4px}
 /* 信箱：窗口之间 agent 的往来信件 */
+.nm b .addr{margin-left:8px;font:500 10.5px/16px var(--sans);letter-spacing:.5px;padding:0 6px;border-radius:5px;background:var(--raise);color:var(--haze);vertical-align:2px;font-variant-numeric:tabular-nums}
 .mailbox{margin-top:28px;border:1px solid var(--seam);border-radius:14px;background:var(--ledge);overflow:hidden}
 .mhead{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--seam)}
 .mhead h2{margin:0;font:400 19px/1.3 var(--hand);letter-spacing:.5px;flex:1}
@@ -69,6 +70,32 @@ code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 
 .ml .sb.q{color:var(--haze)}.ml .sb.h{color:var(--brass)}.ml .sb.f{color:var(--rust)}
 .ml .sb button{border:1px solid var(--seam);background:none;color:var(--paper);border-radius:7px;padding:3px 9px;font-size:11.5px;cursor:pointer}
 .mempty{padding:18px;color:var(--haze);font-size:12.5px;line-height:1.7}
+/* 更新公告弹窗 */
+#nd{position:fixed;inset:0;z-index:30;display:none;align-items:flex-start;justify-content:center;padding:56px 20px;background:rgba(14,18,22,.6);overflow:auto}
+#nd.on{display:flex}
+#nd .card{width:min(560px,100%);background:var(--raise);border:1px solid var(--seam);border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.5);animation:rise .18s ease-out;overflow:hidden}
+#nd .top{display:flex;align-items:center;gap:12px;padding:20px 22px 16px;border-bottom:1px solid var(--seam);background:linear-gradient(180deg,rgba(216,176,106,.10),transparent)}
+#nd .top svg{width:26px;height:26px;color:var(--brass);flex:none}
+#nd .top h3{margin:0;flex:1;font:400 22px/1.2 var(--hand);letter-spacing:1px;color:var(--paper)}
+#nd .top small{display:block;margin-top:3px;font:12px var(--sans);letter-spacing:0;color:var(--haze)}
+#nd .x{width:30px;height:30px;border:0;border-radius:8px;background:none;color:var(--haze);font-size:18px;cursor:pointer}
+#nd .x:hover{background:var(--raise2);color:var(--paper)}
+#nd .list{padding:6px 22px 18px;max-height:calc(100vh - 220px);overflow:auto}
+.rel{position:relative;padding:16px 0 14px 22px;border-top:1px dashed var(--seam)}
+.rel:first-child{border-top:0}
+.rel::before{content:"";position:absolute;left:3px;top:24px;width:8px;height:8px;border-radius:50%;background:var(--seam)}
+.rel.latest::before{background:var(--brass);box-shadow:0 0 0 4px rgba(216,176,106,.18)}
+.rel .h{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px}
+.rel .v{font:600 12px/20px var(--sans);padding:0 8px;border-radius:6px;background:var(--ledge);color:var(--brass);font-variant-numeric:tabular-nums}
+.rel.latest .v{background:var(--brass);color:var(--brass-ink)}
+.rel .nw{font:700 9.5px/16px var(--sans);letter-spacing:.6px;padding:0 6px;border-radius:999px;background:var(--rust);color:#fff}
+.rel .cur{font-size:11px;color:var(--jade)}
+.rel b{font:400 16.5px/1.35 var(--hand);color:var(--paper);letter-spacing:.5px}
+.rel time{margin-left:auto;font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.rel ul{margin:8px 0 0;padding:0;list-style:none;display:grid;gap:5px}
+.rel li{position:relative;padding-left:14px;font-size:13px;line-height:1.6;color:var(--haze)}
+.rel li::before{content:"";position:absolute;left:2px;top:.72em;width:4px;height:4px;border-radius:50%;background:var(--dim)}
+.rel.latest li{color:var(--paper)}
 #dk{display:none;gap:8px;margin-bottom:12px}
 #dk label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:34px;border-radius:8px;border:1px solid var(--seam);background:var(--ledge);cursor:pointer;font-size:13px;color:var(--haze)}
 #dk label.on{border-color:var(--brass);color:var(--paper);background:var(--raise)}
@@ -83,6 +110,7 @@ code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 
   <div id="qtip"></div>
   <section class="roster" id="roster" aria-label="账号列表"></section>
   <section class="mailbox" id="mailbox" aria-label="信箱"></section>
+  <div id="nd" role="dialog" aria-modal="true" aria-label="更新公告"><div class="card"><div class="top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10v4a1 1 0 0 0 1 1h3l6 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg><h3>更新公告<small id="ndsub"></small></h3><button class="x" id="ndx" aria-label="关闭">✕</button></div><div class="list" id="ndl"></div></div></div>
   <section class="guide">
     <div><h2>从 Chrome 导入登录</h2><p>不想在这里输谷歌密码，就在 Chrome 里登录好，再一键带过来。</p></div>
     <ol>
@@ -196,8 +224,8 @@ function renderMail(){
   const M=st.mail||{letters:[],paused:false},L=[...M.letters].reverse();
   const hm=t=>{const d=new Date(t);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')};
   const ST={sent:['已送达',''],queued:['投递中…','q'],fetching:['取附件…','q'],held:['已暂停','h'],failed:['失败','f']};
-  mailbox.innerHTML=`<div class="mhead"><h2>信箱<small>${M.paused?'已暂停，新信先存着':'窗口之间的 agent 会自动写信讨论'}</small></h2><button id="mt">教会所有窗口</button><button id="mp">${M.paused?'继续投递':'暂停'}</button>${L.length?'<button id="mc">清空记录</button>':''}</div>`+
-    (L.length?'':'<div class="mempty">先点「教会所有窗口」，每个已登录的窗口会收到一份信箱说明。之后在窗口 1 里说「去和窗口 2 讨论一下这部分」，两边的 agent 就会自己写信来回，讨论完由窗口 1 告诉你结果。</div>');
+  mailbox.innerHTML=`<div class="mhead"><h2>信箱<small>${M.paused?'已暂停，新信先存着':'窗口之间的 agent 会自动写信讨论'}</small></h2><button id="mt" title="通常不需要：新窗口登录后会自动学会信箱">重发说明</button><button id="mp">${M.paused?'继续投递':'暂停'}</button>${L.length?'<button id="mc">清空记录</button>':''}</div>`+
+    (L.length?'':'<div class="mempty">每个已登录的窗口会自动收到一份信箱说明（以后新加的窗口也一样），并拿到自己唯一的信箱地址。之后在窗口 1 里说「去和窗口 2 讨论一下这部分」，两边的 agent 就会自己写信来回，讨论完由窗口 1 告诉你结果。</div>');
   for(const x of L){const [t,c]=ST[x.status]||[x.status,''];const el=document.createElement('div');el.className='ml';
     el.innerHTML=`<time>${hm(x.at)}</time><div class="who"></div><div class="pv"></div><div class="sb ${c}"><span></span>${x.nfiles?'<button class="fl">📎 '+x.nfiles+'</button>':''}${(x.status==='failed'&&x.to)||x.status==='held'?'<button class="rt">重发</button>':''}</div>`;
     el.querySelector('.who').innerHTML='<span></span><i>→</i><span></span>';const w=el.querySelectorAll('.who span');w[0].textContent=x.fromName;w[1].textContent=x.toName;
@@ -208,6 +236,17 @@ function renderMail(){
     mailbox.appendChild(el);}
   mt.onclick=()=>cockpit.mailTeach();mp.onclick=()=>cockpit.mailPause(!M.paused);if(window.mc)mc.onclick=()=>cockpit.mailClear();
 }
+let notesSt=null;
+function renderNotes(){const n=notesSt;if(!n)return;ndsub.textContent=`当前运行 v${n.running}`+(n.latest&&n.latest!==n.running?`，最新 v${n.latest}（重启后生效）`:'');
+  ndl.innerHTML='';(n.list||[]).forEach((x,i)=>{const el=document.createElement('div');el.className='rel'+(i===0?' latest':'');
+    el.innerHTML=`<div class="h"><span class="v"></span>${i===0?'<span class="nw">NEW</span>':''}${x.version===n.running?'<span class="cur">● 正在使用</span>':''}<b></b><time></time></div><ul></ul>`;
+    el.querySelector('.v').textContent='v'+x.version;el.querySelector('b').textContent=x.title||'';el.querySelector('time').textContent=x.date||'';
+    const ul=el.querySelector('ul');(x.items||[]).forEach(t=>{const li=document.createElement('li');li.textContent=t;ul.appendChild(li)});ndl.appendChild(el)});
+  if(!(n.list||[]).length)ndl.innerHTML='<div class="rel"><b>暂时没有公告</b></div>';}
+const openNotes=async()=>{notesSt=await cockpit.notes();renderNotes();nd.classList.add('on');};
+ndx.onclick=()=>nd.classList.remove('on');nd.onclick=e=>{if(e.target===nd)nd.classList.remove('on')};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')nd.classList.remove('on')});
+cockpit.onOpenNotes(openNotes);cockpit.onNotes(n=>{notesSt=n;if(nd.classList.contains('on'))renderNotes()});
 function render(){
   renderTip();renderMail();
   const n=st.accounts.length,ok=st.accounts.filter(a=>a.loggedIn).length;
@@ -224,6 +263,7 @@ function render(){
       <div class="acts"><button class="btn open">${a.loggedIn?'打开聊天':'去登录'}</button>
       <button class="ib" data-k="reload" title="刷新页面" aria-label="刷新页面">${svg('reload')}</button><button class="ib" data-k="edit" title="重命名" aria-label="重命名">${svg('edit')}</button><button class="ib del" data-k="del" title="删除并清除登录" aria-label="删除并清除登录">${svg('del')}</button></div>`;
     r.querySelector('.mono-av').textContent=(a.name||'H').trim()[0].toUpperCase();r.querySelector('b').textContent=a.name;
+    const ad=st.mail&&st.mail.addrs&&st.mail.addrs[a.id];if(ad){const t=document.createElement('span');t.className='addr';t.textContent=ad;t.title=(st.mail.taught||{})[a.id]?'信箱地址（已学会信箱）':'信箱地址（登录后自动学会信箱）';r.querySelector('.nm b').appendChild(t);}
     r.querySelector('.open').onclick=()=>cockpit.switchTo(a.id);
     r.querySelector('[data-k=reload]').onclick=()=>cockpit.reload(a.id);
     r.querySelector('[data-k=edit]').onclick=()=>ask('重命名账号',a.name,v=>cockpit.rename(a.id,v));
