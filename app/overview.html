@@ -69,6 +69,10 @@ code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 
 .ml .sb.q{color:var(--haze)}.ml .sb.h{color:var(--brass)}.ml .sb.f{color:var(--rust)}
 .ml .sb button{border:1px solid var(--seam);background:none;color:var(--paper);border-radius:7px;padding:3px 9px;font-size:11.5px;cursor:pointer}
 .mempty{padding:18px;color:var(--haze);font-size:12.5px;line-height:1.7}
+#dk{display:none;gap:8px;margin-bottom:12px}
+#dk label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:34px;border-radius:8px;border:1px solid var(--seam);background:var(--ledge);cursor:pointer;font-size:13px;color:var(--haze)}
+#dk label.on{border-color:var(--brass);color:var(--paper);background:var(--raise)}
+#dk input{accent-color:var(--brass)}
 @media (max-width:860px){.wrap{padding:28px 20px}.row{grid-template-columns:40px minmax(0,1fr) auto;row-gap:8px}.row .key{display:none}.row .quota{grid-column:2/-1}.row .acts{grid-column:1/-1;justify-content:flex-end}.guide{grid-template-columns:1fr}.guide ol{grid-template-columns:1fr}}
 </style></head><body>
 <div class="wrap">
@@ -88,19 +92,33 @@ code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 
     </ol>
   </section>
 </div>
-<div id="dlg"><div class="box"><div class="t" id="dt"></div><input id="di"><div class="b"><button class="btn" id="dc">取消</button><button class="btn pri" id="dok">确定</button></div></div></div>
+<div id="dlg"><div class="box"><div class="t" id="dt"></div><div id="dk"><label class="on"><input type="radio" name="ak" value="hark" checked>Hark</label><label><input type="radio" name="ak" value="muse">Muse</label></div><input id="di"><div class="b"><button class="btn" id="dc">取消</button><button class="btn pri" id="dok">确定</button></div></div></div>
 <script src="girl-a.js"></script><script src="girl-b.js"></script>
 <script>
 const TINTS=[['#3B4A5C','#BFD3EA'],['#2F4A47','#A8DCCB'],['#4A3F57','#D6C5EA'],['#55413F','#EBC3B8'],['#504631','#E8D3A2'],['#3C4A35','#C6DDB0']];
 const tint=s=>{let h=0;for(const c of s||'')h=(h*31+c.charCodeAt(0))>>>0;return TINTS[h%TINTS.length]};
 const I={reload:'<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/>',edit:'<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',del:'<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'};
 const svg=k=>`<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${I[k]}</svg>`;
-function ask(title,def,cb,withInput=true,okText){dt.textContent=title;di.style.display=withInput?'':'none';di.value=def||'';dlg.style.display='flex';
+function ask(title,def,cb,withInput=true,okText){dt.textContent=title;dk.style.display='none';di.style.display=withInput?'':'none';di.value=def||'';dlg.style.display='flex';
  dok.textContent=okText||'确定';dok.className='btn '+(withInput?'pri':'danger');if(withInput){di.focus();di.select();}else dok.focus();
  const done=v=>{dlg.style.display='none';dok.onclick=dc.onclick=di.onkeydown=null;if(v!==null)cb(v)};
  dok.onclick=()=>done(withInput?(di.value.trim()||def):true);dc.onclick=()=>done(null);di.onkeydown=e=>{if(e.key==='Enter')dok.click();if(e.key==='Escape')dc.click()};}
 let st={accounts:[],activeId:null},animated=false;
-const addAcc=()=>ask('给新账号起个名字','Hark '+(st.accounts.length+1),name=>cockpit.add({name}),true,'添加账号');
+const MUSE_URL='https://muse.ai';
+function askAdd(cb){
+  const defName=k=>' '+(st.accounts.filter(a=>(a.kind==='muse')===(k==='muse')).length+1);
+  const syncName=()=>{const k=dk.querySelector('input:checked').value;const prefix=k==='muse'?'Muse':'Hark';if(!di.dataset.touched||/^Hark \d+$|^Muse \d+$/.test(di.value.trim()))di.value=prefix+defName(k);};
+  dt.textContent='添加账号';dk.style.display='flex';di.style.display='';di.dataset.touched='';di.value='Hark'+defName('hark');
+  dk.querySelectorAll('label').forEach(l=>{l.classList.toggle('on',l.querySelector('input').value==='hark');l.querySelector('input').checked=l.querySelector('input').value==='hark';});
+  dlg.style.display='flex';dok.textContent='添加账号';dok.className='btn pri';di.focus();di.select();
+  const onKind=()=>{dk.querySelectorAll('label').forEach(l=>l.classList.toggle('on',l.querySelector('input').checked));syncName();};
+  dk.onchange=onKind;di.oninput=()=>{di.dataset.touched='1'};
+  const done=v=>{dlg.style.display='none';dok.onclick=dc.onclick=di.onkeydown=dk.onchange=di.oninput=null;if(v!==null)cb(v)};
+  dok.onclick=()=>{const k=dk.querySelector('input:checked').value;const name=di.value.trim()||((k==='muse'?'Muse':'Hark')+defName(k));done({name,kind:k,url:k==='muse'?MUSE_URL:undefined})};
+  dc.onclick=()=>done(null);
+  di.onkeydown=e=>{if(e.key==='Enter')dok.click();if(e.key==='Escape')dc.click()};
+}
+const addAcc=()=>askAdd(o=>cockpit.add(o));
 addBtn.onclick=addAcc;
 // 问候插画：照用户头像画的 Q 版小人（插画内嵌为 webp），外面的太阳、月亮、云、热气和 zZ 用 SVG 动画
 const GIRL=window.GIRL||{};
@@ -154,18 +172,22 @@ setInterval(()=>{let due=false;document.querySelectorAll('[data-reset]').forEach
   if(due&&!fmtLeft.asked){fmtLeft.asked=true;setTimeout(()=>{fmtLeft.asked=false;cockpit.refreshUsage()},60000)}},30000);
 function quota(a){
   if(!a.loggedIn)return '<span class="qmsg">登录后显示额度</span>';
-  if(!st.usageReady)return '<span class="qmsg">额度待识别</span>';
+  const muse=a.kind==='muse'||/muse\.ai/i.test(a.url||'');
+  if(!muse && !st.usageReady)return '<span class="qmsg">额度待识别</span>';
   const u=a.usage;if(!u)return '<span class="qmsg">正在读取…</span>';
   if(!u.buckets||!u.buckets.length)return `<span class="qmsg">${u.error||'没有额度数据'}</span>`;
   return u.buckets.slice(0,2).map(b=>{const p=b.pct??0,cls=p>=90?'hot':p>=70?'warn':'';
-    const val=b.used!=null&&b.limit!=null?`${fmtN(b.used)} / ${fmtN(b.limit)}`:`已用 ${p}%`;
+    let val=b.note||(b.used!=null&&b.limit!=null?`${fmtN(b.used)} / ${fmtN(b.limit)}`:`已用 ${p}%`);
+    if(muse && b.key==='topup' && b.note) val=b.note;
+    if(muse && b.key==='weekly' && !b.note) val=`已用 ${p}%`;
     const t=b.resets?`${fmtT(b.resets)} 重置`:'';
     const rs=b.resets?`<div class="rs"><span>${t}</span><b data-reset="${b.resets}">${fmtLeft(b.resets)}</b></div>`:'';
     return `<div class="q ${cls}" title="${t}"><span>${b.label}</span><em>${val}</em><div class="bar"><i style="width:${p}%"></i></div>${rs}</div>`}).join('');
 }
 function renderTip(){
   if(!st.accounts.some(a=>a.loggedIn)){qtip.innerHTML='<div class="qhead"><button id="ex3">导出诊断文件</button></div>';ex3.onclick=()=>cockpit.exportDiag();return;}
-  if(!st.usageReady){qtip.innerHTML='<div class="tip"><span><b>还没读到额度。</b>先在任一已登录账号里正常聊几句、打开一下设置，再点「导出诊断文件」发给 Hark，用来找到额度数据的来源。文件只含接口地址和字段名，没有聊天内容和登录信息。</span><span style="display:flex;gap:8px"><button class="btn" id="ob">打开账号</button><button class="btn pri" id="ex">导出诊断文件</button></span></div>';ob.onclick=()=>cockpit.openBilling();ex.onclick=()=>cockpit.exportDiag();return;}
+  const onlyMuse=st.accounts.filter(a=>a.loggedIn).every(a=>a.kind==='muse'||/muse\.ai/i.test(a.url||''));
+  if(!st.usageReady && !onlyMuse){qtip.innerHTML='<div class="tip"><span><b>还没读到额度。</b>先在任一已登录账号里正常聊几句、打开一下设置，再点「导出诊断文件」发给 Hark，用来找到额度数据的来源。文件只含接口地址和字段名，没有聊天内容和登录信息。</span><span style="display:flex;gap:8px"><button class="btn" id="ob">打开账号</button><button class="btn pri" id="ex">导出诊断文件</button></span></div>';ob.onclick=()=>cockpit.openBilling();ex.onclick=()=>cockpit.exportDiag();return;}
   const ts=st.accounts.map(a=>a.usage&&a.usage.at).filter(Boolean);
   qtip.innerHTML=`<div class="qhead"><span>${ts.length?'额度更新于 '+fmtT(Math.max(...ts))+'，':''}每 10 分钟自动刷新</span><button id="rq">立即刷新</button><button id="ex2">导出诊断文件</button></div>`;ex2.onclick=()=>cockpit.exportDiag();
   rq.onclick=()=>{rq.textContent='刷新中…';cockpit.refreshUsage()};
@@ -196,7 +218,7 @@ function render(){
     const [bg,fg]=tint(a.name),cur=a.id===st.activeId;
     const r=document.createElement('div');r.className='row'+(cur?' cur':'')+(a.loggedIn?'':' off');if(animated)r.style.animation='none';else r.style.animationDelay=(i*45)+'ms';
     r.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div>
-      <div class="nm"><b></b><small class="${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.loggedIn?'已登录':'未登录'}${cur?'<span class="cur">上次使用</span>':''}</small></div>
+      <div class="nm"><b></b><small class="${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.kind==='muse'?'Muse · ':''}${a.loggedIn?'已登录':'未登录'}${cur?'<span class="cur">上次使用</span>':''}</small></div>
       <div class="quota">${quota(a)}</div>
       <div class="key">${i<9?'Ctrl '+(i+1):''}</div>
       <div class="acts"><button class="btn open">${a.loggedIn?'打开聊天':'去登录'}</button>
