@@ -7,25 +7,25 @@ const http = require('http');
 const SIDEBAR_W = 264;
 const TOOLBAR_H = 52;
 const DEFAULT_URL = 'https://app.hark.com';
-const MUSE_URL = 'https://muse.ai';
-const URLS = { hark: DEFAULT_URL, muse: MUSE_URL };
+const URLS = { hark: DEFAULT_URL };
 
 function normalizeKind(kind, url) {
+  // Muse 已下线：历史 kind/url 一律当作无效，加载时会丢掉
   const k = String(kind || '').toLowerCase();
-  if (k === 'muse' || k === 'hark') return k;
-  if (url && /muse\.ai/i.test(String(url))) return 'muse';
+  if (k === 'hark') return 'hark';
+  if (url && /muse\.ai/i.test(String(url))) return 'drop';
+  if (k === 'muse') return 'drop';
   return 'hark';
 }
-function urlForKind(kind) { return URLS[normalizeKind(kind)] || DEFAULT_URL; }
-function isMuseAccount(a) { return normalizeKind(a && a.kind, a && a.url) === 'muse'; }
-function isCollabAccount(a) { const k = normalizeKind(a && a.kind, a && a.url); return k === 'hark' || k === 'muse'; }
-function siteSeries(a) { return isMuseAccount(a) ? 'mu' : 'hark'; }
-function collabUrlOk(url) { return /^https:\/\/app\.hark\.com/.test(url || '') || /^https:\/\/(www\.)?muse\.ai(\/|$|\?|#)/.test(url || ''); }
+function urlForKind(_kind) { return DEFAULT_URL; }
+function isCollabAccount(a) { return normalizeKind(a && a.kind, a && a.url) === 'hark'; }
+function siteSeries(_a) { return 'hark'; }
+function collabUrlOk(url) { return /^https:\/\/app\.hark\.com/.test(url || ''); }
 // 去掉 Electron 标识，降低 Google 登录拦截“此浏览器不安全”的概率
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
 const store = path.join(app.getPath('userData'), 'accounts.json');
-let accounts = [];      // [{id, name, url, kind:'hark'|'muse'}]
+let accounts = [];      // [{id, name, url, kind:'hark'}]
 let activeId = null;
 const views = new Map(); // id -> WebContentsView
 let win, sidebar, home, toolbar;
@@ -36,9 +36,11 @@ function load() {
     const d = JSON.parse(fs.readFileSync(store, 'utf8'));
     accounts = (d.accounts || []).map(a => {
       const kind = normalizeKind(a.kind, a.url);
-      return { ...a, kind, url: a.url || urlForKind(kind) };
-    });
+      if (kind === 'drop') return null; // 丢弃已下线的 Muse 账号，不再打开 muse.ai 窗口
+      return { ...a, kind: 'hark', url: a.url && !/muse\.ai/i.test(String(a.url)) ? a.url : DEFAULT_URL };
+    }).filter(Boolean);
     activeId = d.activeId;
+    if (activeId && !accounts.some(a => a.id === activeId)) activeId = accounts[0]?.id || null;
   } catch { accounts = []; }
 }
 function save() { fs.writeFileSync(store, JSON.stringify({ accounts, activeId }, null, 2)); }
@@ -71,7 +73,7 @@ function getView(acc) {
   // Google OAuth 等弹窗留在同一会话内，其他外链用系统浏览器打开
   v.webContents.setWindowOpenHandler(({ url }) => {
     if (dlWait.has(acc.id)) { v.webContents.downloadURL(url); return { action: 'deny' }; } // 信箱正在取附件
-    if (/accounts\.google\.com|hark\.com|muse\.ai|auth\.muse\.ai|auth\.meta\.com|accountscenter\.meta\.com|facebook\.com|instagram\.com|appleid\.apple\.com|login\.microsoftonline\.com/.test(url)) {
+    if (/accounts\.google\.com|hark\.com|auth\.meta\.com|accountscenter\.meta\.com|facebook\.com|instagram\.com|appleid\.apple\.com|login\.microsoftonline\.com/.test(url)) {
       return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, webPreferences: { partition: partitionOf(acc.id) } } };
     }
     shell.openExternal(url);
@@ -108,35 +110,20 @@ function activate(id) {
 
 function showOverview() { showHome = true; layout(); pushState(); home?.webContents.focus(); }
 
-// 登录状态：Hark 看 hark.com session；Muse 看 muse.ai 的 hatch_* 会话 cookie
+// 登录状态：Hark 看 hark.com session
 const loginState = {};
-// Muse 登录凭证：分区里 .muse.ai 的 hatch_sess / hatch_gw / hatch_vml / hatch_native_auth_device
-// （实测登录后一定有 hatch_sess；仅匹配 session|sess 在部分部署会漏判）
-function isMuseLoginCookie(c) {
-  const host = String(c.domain || '').replace(/^\./, '');
-  if (!/(^|\.)muse\.ai$/.test(host)) return false;
-  const n = String(c.name || '');
-  if (/^(hatch_sess|hatch_gw|hatch_vml|hatch_native_auth_device)$/i.test(n)) return true;
-  // 其它 hatch_* 业务 cookie；排除 Meta/CF 噪音
-  if (/^hatch_/i.test(n) && !/^(hatch_cf|hatch_theme)/i.test(n)) return true;
-  return false;
-}
 async function refreshStatus() {
   await Promise.all(accounts.map(async a => {
     try {
       const cs = await session.fromPartition(partitionOf(a.id)).cookies.get({});
-      if (isMuseAccount(a)) {
-        loginState[a.id] = cs.some(isMuseLoginCookie);
-      } else {
-        loginState[a.id] = cs.some(c => {
-          const host = c.domain.replace(/^\./, '');
-          return /(^|\.)hark\.com$/.test(host) && /session/i.test(c.name);
-        });
-      }
+      loginState[a.id] = cs.some(c => {
+        const host = c.domain.replace(/^\./, '');
+        return /(^|\.)hark\.com$/.test(host) && /session/i.test(c.name);
+      });
     } catch { loginState[a.id] = false; }
   }));
 }
-function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], usage: usage[a.id] || null, kind: normalizeKind(a.kind, a.url) })), activeId, showHome, usageReady: !!usageCfg.url || accounts.some(a => isMuseAccount(a) && loginState[a.id]), mail: mailSnapshot() }; }
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], usage: usage[a.id] || null, kind: 'hark' })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
 let pushT;
 function pushState() {
   clearTimeout(pushT);
@@ -151,12 +138,12 @@ function pushState() {
 }
 
 ipcMain.handle('add', (_e, { name, url, kind }) => {
-  const k = normalizeKind(kind, url);
+  if (normalizeKind(kind, url) === 'drop') return null;
   const acc = {
     id: Date.now().toString(36),
-    name: name || `${k === 'muse' ? 'Muse' : 'Hark'} ${accounts.filter(a => normalizeKind(a.kind, a.url) === k).length + 1}`,
-    url: url || urlForKind(k),
-    kind: k,
+    name: name || `Hark ${accounts.length + 1}`,
+    url: (url && !/muse\.ai/i.test(String(url))) ? url : DEFAULT_URL,
+    kind: 'hark',
   };
   accounts.push(acc); save(); activate(acc.id); return acc;
 });
@@ -264,7 +251,6 @@ function parseUsage(obj) {
 }
 const SKIP_HEADERS = /^(cookie|host|content-length|accept-encoding|connection|origin|referer|sec-|user-agent|:)/i;
 function watchUsage(acc, wc) {
-  if (isMuseAccount(acc)) return;
   try { wc.debugger.attach('1.3'); } catch { return; }
   const reqs = new Map();
   wc.debugger.sendCommand('Network.enable').catch(() => {});
@@ -333,171 +319,11 @@ async function fetchUsage(acc) {
   } catch (e) { usage[acc.id] = { ...(usage[acc.id] || {}), error: '网络错误' }; }
 }
 let polling = false;
-// ===== Muse 额度：Settings → 通用 → 使用情况（Next.js server action，非公开 REST）=====
-// POST https://muse.ai/  + header next-action=<deploy-specific id>
-// body: [{"includeAgreement":true}]  → RSC flight 行里 subscription.usage.percentUsed / topup*
-const museUsageStore = path.join(app.getPath('userData'), 'muse-usage.json');
-const MUSE_ACTION_KNOWN = '4029ac5c4bd03136487d91ebde5de39c64b35229b4';
-let museActionId = null;
-try { museActionId = JSON.parse(fs.readFileSync(museUsageStore, 'utf8')).actionID || null; } catch {}
-function saveMuseAction(id) {
-  museActionId = id || null;
-  try { fs.writeFileSync(museUsageStore, JSON.stringify({ actionID: museActionId, at: Date.now() }, null, 2)); } catch {}
-}
-function museChunkPaths(text) {
-  return [...new Set((String(text).match(/static\/chunks\/[\w~.-]+\.js/g) || []).map(p => '/_next/' + p))];
-}
-async function museGet(ses, url, headers = {}) {
-  const res = await ses.fetch(url, { headers: { 'user-agent': UA, ...headers }, credentials: 'include' });
-  const text = await res.text();
-  return { status: res.status, text, url: res.url };
-}
-async function discoverMuseAction(ses) {
-  const page = await museGet(ses, MUSE_URL + '/', { accept: 'text/html' });
-  if (page.status === 401 || page.status === 403 || /auth\.muse\.ai/i.test(page.url || '')) return null;
-  if (page.status !== 200) throw new Error('muse page ' + page.status);
-  const paths = museChunkPaths(page.text).slice(0, 96);
-  let text = '';
-  for (let i = 0; i < paths.length; i += 8) {
-    const batch = paths.slice(i, i + 8);
-    const bodies = await Promise.all(batch.map(p => museGet(ses, MUSE_URL + p, { accept: '*/*' }).then(r => r.status === 200 ? r.text : '').catch(() => '')));
-    text += '\n' + bodies.join('\n');
-    const module = /\.A\((\d+)\)\.then\(\(\{[^}]*Settings/.exec(text)?.[1];
-    if (!module) continue;
-    const loader = new RegExp(`[,{\\[]${module},\\w+=>\\{\\w+\\.v\\(\\w+=>Promise\\.all\\(\\[([^\\]]*)`).exec(text);
-    if (!loader) continue;
-    const settingsPaths = museChunkPaths(loader[1]).slice(0, 32);
-    for (let j = 0; j < settingsPaths.length; j += 8) {
-      const sb = await Promise.all(settingsPaths.slice(j, j + 8).map(p => museGet(ses, MUSE_URL + p, { accept: '*/*' }).then(r => r.status === 200 ? r.text : '').catch(() => '')));
-      for (const body of sb) {
-        const id = /"([0-9a-f]{40,})",[^"]{0,200}"fetchSubscriptionAction"/.exec(body)?.[1];
-        if (id) return id;
-      }
-    }
-    break;
-  }
-  const fallback = /"([0-9a-f]{40,})",[^"]{0,200}"fetchSubscriptionAction"/.exec(text)?.[1];
-  return fallback || null;
-}
-async function postMuseSubscription(ses, actionID) {
-  const res = await ses.fetch(MUSE_URL + '/', {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'user-agent': UA,
-      accept: 'text/x-component',
-      'content-type': 'text/plain;charset=UTF-8',
-      'next-action': actionID,
-      origin: MUSE_URL,
-      'sec-fetch-site': 'same-origin',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-dest': 'empty',
-    },
-    body: JSON.stringify([{ includeAgreement: true }]),
-  });
-  const text = await res.text();
-  return { status: res.status, text };
-}
-function parseMuseFlight(bodyText) {
-  let sub = null;
-  for (const line of String(bodyText).split('\n')) {
-    try {
-      const m = /^[0-9a-f]+:(\{.*\})\s*$/.exec(line);
-      if (!m) continue;
-      const row = JSON.parse(m[1]);
-      if (row && row.success === true && row.subscription) sub = row.subscription;
-    } catch {}
-  }
-  return sub;
-}
-function tokensLeftNote(label) {
-  const m = /\(([^()]*词元[^()]*)\)|\(([^()]+ tokens left)\)/i.exec(label || '');
-  return (m && (m[1] || m[2])) || null;
-}
-function pctFromLabel(label) {
-  const m = /已使用\s*([\d.]+)\s*%|([\d.]+)\s*%\s*used/i.exec(label || '');
-  return m ? num(m[1] || m[2]) : null;
-}
-function museBuckets(sub) {
-  const buckets = [];
-  const u = sub.usage || {};
-  const pct = num(u.percentUsed);
-  const resetsSec = num(u.resetsAt);
-  buckets.push({
-    key: 'weekly',
-    label: sub.usageRowLabel || sub.tier?.name || '免费版',
-    pct: pct == null ? 0 : Math.max(0, Math.min(100, pct)),
-    used: null,
-    limit: null,
-    resets: resetsSec != null ? resetsSec * 1000 : null,
-    note: sub.usageRowValueLabel || (pct != null ? `已使用 ${pct}%` : null),
-  });
-  const bal = num(sub.topupBalance), tot = num(sub.topupTotal);
-  if (tot != null && tot > 0) {
-    let tp = pctFromLabel(sub.topupRowValueLabel);
-    if (tp == null && bal != null) tp = Math.max(0, Math.min(100, Math.round((tot - bal) / tot * 1000) / 10));
-    buckets.push({
-      key: 'topup',
-      label: sub.topupRowLabel || '额外额度',
-      pct: tp == null ? 0 : tp,
-      used: null,
-      limit: null,
-      resets: null,
-      note: tokensLeftNote(sub.topupRowValueLabel) || sub.topupRowValueLabel || null,
-    });
-  }
-  return buckets;
-}
-async function fetchMuseUsage(acc) {
-  try {
-    const ses = session.fromPartition(partitionOf(acc.id));
-    let actionID = museActionId || MUSE_ACTION_KNOWN;
-    let res = actionID ? await postMuseSubscription(ses, actionID) : null;
-    const stale = res && res.status === 404 && /server action not found/i.test(res.text);
-    const signedOut = res && (res.status === 401 || res.status === 403 || /auth\.muse\.ai/i.test(res.text));
-    if (!res || stale || signedOut) {
-      if (stale) saveMuseAction(null);
-      actionID = await discoverMuseAction(ses);
-      if (!actionID) {
-        usage[acc.id] = { at: Date.now(), buckets: [], error: signedOut ? '未登录' : '找不到额度接口' };
-        return;
-      }
-      res = await postMuseSubscription(ses, actionID);
-      if (res.status === 404 && /server action not found/i.test(res.text)) {
-        usage[acc.id] = { at: Date.now(), buckets: [], error: '额度接口已变更' };
-        return;
-      }
-    }
-    if (res.status === 401 || res.status === 403) {
-      usage[acc.id] = { at: Date.now(), buckets: [], error: '未登录' };
-      return;
-    }
-    if (res.status !== 200) {
-      usage[acc.id] = { ...(usage[acc.id] || {}), error: '读取失败 ' + res.status };
-      return;
-    }
-    const sub = parseMuseFlight(res.text);
-    if (!sub || typeof sub.usage?.percentUsed !== 'number') {
-      usage[acc.id] = { at: Date.now(), buckets: [], error: '没有额度数据' };
-      return;
-    }
-    saveMuseAction(actionID);
-    usage[acc.id] = { at: Date.now(), buckets: museBuckets(sub) };
-  } catch (e) {
-    usage[acc.id] = { ...(usage[acc.id] || {}), error: '网络错误' };
-  }
-}
-
 async function pollUsage() {
-  const hasHark = !!usageCfg.url;
-  const hasMuse = accounts.some(a => isMuseAccount(a));
-  if (polling || (!hasHark && !hasMuse)) return; polling = true;
+  if (polling || !usageCfg.url) return; polling = true;
   try {
     await refreshStatus();
-    await Promise.all(accounts.filter(a => loginState[a.id]).map(a => {
-      if (isMuseAccount(a)) return fetchMuseUsage(a);
-      return hasHark ? fetchUsage(a) : null;
-    }));
+    await Promise.all(accounts.filter(a => loginState[a.id]).map(a => fetchUsage(a)));
   } finally { polling = false; pushState(); pushQuota().catch(() => {}); }
 }
 ipcMain.handle('refreshUsage', () => pollUsage());
@@ -608,7 +434,7 @@ function letterText(L) {
 }
 const COMPOSER_JS = text => `(async () => {
   const vis = e => { const r = e.getBoundingClientRect(); return r.width > 40 && r.height > 10 && getComputedStyle(e).visibility !== 'hidden'; };
-  // Muse 用 Lexical contenteditable；Hark 多为 textarea。优先可见的 textbox / contenteditable，再退回 textarea
+  // Hark 多为 textarea；也兼容 contenteditable。优先可见的 textbox / contenteditable，再退回 textarea
   const sel = '[role="textbox"][contenteditable="true"], [contenteditable="true"], [contenteditable=""], textarea, [role="textbox"]';
   const cands = [...document.querySelectorAll(sel)].filter(e => !e.disabled && !e.readOnly && vis(e));
   const el = cands.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0]
@@ -658,7 +484,7 @@ async function deliverQueue() {
       }
       if (r === 'no-composer') {
         L.status = 'failed';
-        L.note = !loginState[acc.id] ? '收件窗口未登录' : (isMuseAccount(acc) ? '没找到 Muse 输入框（未进聊天页或 DOM 未就绪）' : '没找到输入框');
+        L.note = !loginState[acc.id] ? '收件窗口未登录' : '没找到输入框';
         if (L.teach && mail.taught) { L.tries = (L.tries || 0) + 1; if (L.tries < 3) delete mail.taught[acc.id]; }
       }
       else { L.status = 'sent'; L.sentAt = Date.now(); toast(`信箱：${L.fromName} → ${acc.name}${L.subject ? '「' + L.subject + '」' : ''}`); }
@@ -723,8 +549,7 @@ async function uploadFiles(wc, paths) {
 ipcMain.handle('mailFiles', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.files && L.files[0]) shell.showItemInFolder(L.files[0].path); });
 function protocolText(acc) {
   if (site.ok) return siteProtocolText(acc);
-  const kind = isMuseAccount(acc) ? 'Muse' : 'Hark';
-  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark / Muse 窗口，每个窗口有唯一的信箱地址，你是 ${kind}，地址是 ${mailAddr(acc)}。通讯录：\n${directory(acc)}\n\n当我让你去和另一个窗口讨论，或你需要别的窗口配合时，用写信的方式联系它：把信放进一个代码块发出，格式如下——\n\n[[MAIL to=对方的信箱地址，例如 #ABCD]]\n主题: 一句话主题\n${PLACEHOLDER}（文字、方案、代码都可以直接写在这里）\n[[/MAIL]]\n\nHark Tools 会自动把信送到对方窗口，对方也会用同样的格式回信给你。一封信一个代码块；正文里如果要放代码，直接写，不要再嵌套代码块。内容很长（大段代码、整个文件、多个文件）时，别塞进正文：把它存成文件（txt、md、源码文件、zip 压缩包等任意格式都行），作为附件放在写信的同一条回复里，并在信里加一行「附件: 文件名1, 文件名2」，Hark Tools 会把文件一起送过去。收件人优先写信箱地址（窗口改名或调顺序时地址不变），也可以写窗口名或编号。你的身份由 Hark Tools 按发信窗口自动标注，不用自己署名。新窗口加入时，你收到的来信末尾会附最新通讯录。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」，不用写信。`;
+  return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，每个窗口有唯一的信箱地址，你是 Hark，地址是 ${mailAddr(acc)}。通讯录：\n${directory(acc)}\n\n当我让你去和另一个窗口讨论，或你需要别的窗口配合时，用写信的方式联系它：把信放进一个代码块发出，格式如下——\n\n[[MAIL to=对方的信箱地址，例如 #ABCD]]\n主题: 一句话主题\n${PLACEHOLDER}（文字、方案、代码都可以直接写在这里）\n[[/MAIL]]\n\nHark Tools 会自动把信送到对方窗口，对方也会用同样的格式回信给你。一封信一个代码块；正文里如果要放代码，直接写，不要再嵌套代码块。内容很长（大段代码、整个文件、多个文件）时，别塞进正文：把它存成文件（txt、md、源码文件、zip 压缩包等任意格式都行），作为附件放在写信的同一条回复里，并在信里加一行「附件: 文件名1, 文件名2」，Hark Tools 会把文件一起送过去。收件人优先写信箱地址（窗口改名或调顺序时地址不变），也可以写窗口名或编号。你的身份由 Hark Tools 按发信窗口自动标注，不用自己署名。新窗口加入时，你收到的来信末尾会附最新通讯录。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」，不用写信。`;
 }
 ipcMain.handle('mailPause', (_e, on) => { mail.paused = !!on; if (!on) mail.letters.filter(x => x.status === 'held').forEach(x => { x.status = 'queued'; x.note = ''; }); mailSave(); pushState(); deliverQueue(); });
 ipcMain.handle('mailRetry', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.to) { L.status = 'queued'; L.note = ''; L.at = Date.now(); mailSave(); pushState(); deliverQueue(); } });
@@ -801,7 +626,7 @@ async function importCookies(accId, cookies) {
   for (const c of cookies || []) {
     try {
       const host = String(c.domain || '').replace(/^\./, '');
-      if (!/(^|\.)hark\.com$/.test(host) && !/(^|\.)muse\.ai$/.test(host)) continue;
+      if (!/(^|\.)hark\.com$/.test(host)) continue;
       const d = { url: `https://${host}${c.path || '/'}`, name: c.name, value: c.value, path: c.path || '/',
         secure: !!c.secure, httpOnly: !!c.httpOnly };
       if (!c.hostOnly && !c.name.startsWith('__Host-')) d.domain = c.domain;
@@ -830,25 +655,18 @@ function startBridge() {
           const { accountId, cookies, newName, silent, kind } = JSON.parse(body || '{}');
           let id = accountId;
           const k = normalizeKind(kind);
+          if (k === 'drop') return json(400, { ok: false, error: 'Muse 已下线，请导入 Hark 账号' });
           if (!id || id === '__new__') {
-            const nCount = accounts.filter(a => normalizeKind(a.kind, a.url) === k).length + 1;
             const acc = {
               id: Date.now().toString(36),
-              name: newName || `${k === 'muse' ? 'Muse' : 'Hark'} ${nCount}`,
-              url: urlForKind(k),
-              kind: k,
+              name: newName || `Hark ${accounts.length + 1}`,
+              url: DEFAULT_URL,
+              kind: 'hark',
             };
             accounts.push(acc); save(); id = acc.id;
           } else if (kind) {
             const existing = accounts.find(a => a.id === id);
-            if (existing) {
-              const nk = normalizeKind(kind, existing.url);
-              if (normalizeKind(existing.kind, existing.url) !== nk) {
-                existing.kind = nk;
-                existing.url = urlForKind(nk);
-                save();
-              }
-            }
+            if (existing) { existing.kind = 'hark'; existing.url = existing.url && !/muse\.ai/i.test(String(existing.url)) ? existing.url : DEFAULT_URL; save(); }
           }
           const n = await importCookies(id, cookies);
           const acc = accounts.find(a => a.id === id);
@@ -882,11 +700,11 @@ function siteBook(me) {
 function siteProtocolText(acc) {
   const A = siteAddr(acc), ser = siteSeries(acc), W = A.slice(ser.length + 1);
   const book = siteBook(acc);
-  return `agent.miracleai.club 是我自己搭的，我的几个窗口用它互相传信。\n\n【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 和 Mu 窗口，窗口之间通过 ${SITE} 的传信接口互相写信（跨系列也能写信）。你是 ${ser}，信箱地址是 ${A}。\n通讯录（含对方窗口地址，协作前先看额度再选人）：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"${ser}","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD 或 mu.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。\n\n额度共享（两块板都要看，才能知道该找谁协作）：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的窗口，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文交给额度富裕的窗口（可以是另一系列），并告诉我。\n\n完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
+  return `agent.miracleai.club 是我自己搭的，我的几个窗口用它互相传信。\n\n【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，窗口之间通过 ${SITE} 的传信接口互相写信。你是 ${ser}，信箱地址是 ${A}。\n通讯录（含对方窗口地址，协作前先看额度再选人）：\n${book}\n\n第一次使用：\ncurl -s -X POST ${SITE}/api/agent -H 'Content-Type: application/json' -d '{"name":"${ser}","window":"${W}"}'\n拿到的 token 存进你自己的持久目录（比如记忆或工作区文件），以后换会话也沿用，不要重新注册；丢了再用 "action":"reclaim" 取回。\n\n写信：\ncurl -s -X POST ${SITE}/api/message -H "Authorization: Bearer <你的token>" -H 'Content-Type: application/json' -d '{"to":"对方地址，如 hark.ABCD","title":"一句话主题","content":"正文，长代码、补丁、数据都可以直接放"}'\n读信：curl -s ${SITE}/api/message/<id>\n读完：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"\n\n有人给你写信时，Hark Tools 会在这里提醒你信的 id，你去读、处理、回信即可。\n\n额度共享：\ncurl -s "${SITE}/api/quota?series=hark"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的窗口，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文交给额度富裕的窗口，并告诉我。\n\n完整规则见 ${SITE}/notice.md。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」。`;
 }
 function quotaTeachText(acc) {
   const book = siteBook(acc);
-  return `【Hark Tools 额度共享，请记住】Hark 与 Mu 窗口的额度都公开共享，找人协作前先查板再选地址：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文写信交给额度富裕的窗口（可跨系列），并告诉我。${quotaText(acc) ? '你现在' + quotaText(acc) + '。' : ''}\n当前通讯录：\n${book}\n收到这条只需回复「好的」。`;
+  return `【Hark Tools 额度共享，请记住】Hark 窗口的额度公开共享，找人协作前先查板再选地址：\ncurl -s "${SITE}/api/quota?series=hark"\ntoday_left 是剩余百分比，约每 10 分钟更新。优先找今日剩余最多的，别找低于 20% 的；你自己低于 15% 时，把剩下的活连同完整上下文写信交给额度富裕的窗口，并告诉我。${quotaText(acc) ? '你现在' + quotaText(acc) + '。' : ''}\n当前通讯录：\n${book}\n收到这条只需回复「好的」。`;
 }
 // 额度共享：每个协同窗口今日/本期还剩多少，按系列发到网站 /api/quota
 function quotaOf(a) {
@@ -908,34 +726,33 @@ async function sitePost(q, body, token) {
   try { const r = await require('electron').net.fetch(SITE + q, { method: 'POST', signal: ctl.signal, headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(body) }); return await r.json().catch(() => null); } catch { return null; } finally { clearTimeout(t); }
 }
 async function ensureSiteToolToken(series) {
-  const key = series === 'mu' ? 'siteToolTokenMu' : 'siteToolToken';
-  if (series === 'mu' && !mail[key] && mail.siteToolTokenMuse) { mail[key] = mail.siteToolTokenMuse; mailSave(); }
+  const key = 'siteToolToken';
   if (mail[key]) return mail[key];
-  const j = await sitePost('/api/agent', { name: series, window: 'TOOL', action: 'reclaim', note: 'Hark Tools quota publisher' });
+  const j = await sitePost('/api/agent', { name: series || 'hark', window: 'TOOL', action: 'reclaim', note: 'Hark Tools quota publisher' });
   if (!j || !j.token) return null;
   mail[key] = j.token; mailSave(); return j.token;
 }
 async function pushQuota() {
   if (!site.ok) return;
-  for (const series of ['hark', 'mu']) {
-    const token = await ensureSiteToolToken(series);
-    if (!token) continue;
-    const windows = accounts.filter(a => isCollabAccount(a) && siteSeries(a) === series).map(a => ({ address: siteAddr(a), name: a.name, logged_in: !!loginState[a.id], ...quotaOf(a) }));
+  const series = 'hark';
+  const token = await ensureSiteToolToken(series);
+  if (token) {
+    const windows = accounts.filter(isCollabAccount).map(a => ({ address: siteAddr(a), name: a.name, logged_in: !!loginState[a.id], ...quotaOf(a) }));
     const j = await sitePost('/api/quota', { windows }, token);
-    if (j && j.ok === false && /token/i.test(j.error || '')) { mail[series === 'mu' ? 'siteToolTokenMu' : 'siteToolToken'] = null; mailSave(); }
+    if (j && j.ok === false && /token/i.test(j.error || '')) { mail.siteToolToken = null; mailSave(); }
   }
-  // collabTeachVer=4：开头补自建站说明 + 系列 mu（升级后给所有已登录协同窗口重发说明）
-  if ((mail.collabTeachVer || 0) < 4) {
-    mail.collabTeachVer = 4;
+  // collabTeachVer=5：移除 Muse/Mu，网站信箱仅 hark（升级后重发说明）
+  if ((mail.collabTeachVer || 0) < 5) {
+    mail.collabTeachVer = 5;
     mail.siteTaught = mail.siteTaught || {};
     mail.taught = mail.taught || {};
     mail.quotaTaught = Date.now();
     for (const a of accounts) if (loginState[a.id] && isCollabAccount(a)) {
       mail.siteTaught[a.id] = Date.now();
       mail.taught[a.id] = Date.now();
-      mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明（Hark+Mu 协同）', body: '', status: 'queued', note: '', teach: true, auto: true });
+      mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明（仅 Hark）', body: '', status: 'queued', note: '', teach: true, auto: true });
       const raw = quotaTeachText(a);
-      mail.letters.push({ id: 'q' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '额度共享说明（含 Mu）', body: raw, raw, status: 'queued', note: '', site: true, auto: true });
+      mail.letters.push({ id: 'q' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '额度共享说明', body: raw, raw, status: 'queued', note: '', site: true, auto: true });
     }
     mailSave(); pushState(); deliverQueue();
   }
@@ -949,49 +766,43 @@ async function sitePoll() {
   const fresh = mail.siteSeq == null;
   const seq = fresh ? 0 : mail.siteSeq;
   const jH = await siteGet(`/api/message?to_prefix=hark.&since_seq=${seq}&limit=100`);
-  const jM = await siteGet(`/api/message?to_prefix=mu.&since_seq=${seq}&limit=100`);
   const hasH = jH && typeof jH.next_seq === 'number';
-  const hasM = jM && typeof jM.next_seq === 'number';
-  if (!hasH && !hasM) { // 网站还没上线窗口级地址：继续用页面抓信
+  if (!hasH) {
     if (site.ok) { site.ok = false; pushState(); }
     return;
   }
-  const next = Math.max(hasH ? jH.next_seq : 0, hasM ? jM.next_seq : 0);
-  let messages = [...(hasH ? (jH.messages || []) : []), ...(hasM ? (jM.messages || []) : [])];
+  const next = jH.next_seq;
+  let messages = [...(jH.messages || [])];
   const seenId = new Set(); messages = messages.filter(m => { if (!m || !m.id || seenId.has(m.id)) return false; seenId.add(m.id); return true; }).sort((x, y) => (x.seq || 0) - (y.seq || 0));
   if (!site.ok) {
     site.ok = true; setTimeout(() => pushQuota().catch(() => {}), 1000);
-    // 第一次切到网站信箱：给尚未教过的协同窗口发说明（升级重教由 collabTeachVer 负责）
     mail.siteTaught = mail.siteTaught || {};
     for (const a of accounts) if (loginState[a.id] && !mail.siteTaught[a.id] && isCollabAccount(a)) {
       mail.siteTaught[a.id] = Date.now();
       mail.letters.push({ id: 'p' + Date.now().toString(36) + a.id.slice(-3), at: Date.now(), from: null, fromName: 'Hark Tools', to: a.id, toName: a.name, subject: '信箱说明（网站版）', body: '', status: 'queued', note: '', teach: true, auto: true });
     }
   }
-  if (fresh) { mail.siteSeq = next; mailSave(); pushState(); deliverQueue(); return; } // 首次只记游标，不翻旧信
-  // 网站把 since_seq=0 当作“只建游标”：游标停在 0 会永远收不到第一封，这里改从完整列表补
+  if (fresh) { mail.siteSeq = next; mailSave(); pushState(); deliverQueue(); return; }
   if (mail.siteSeq === 0 && next > 0 && !messages.length) {
     const all = await siteGet('/api/message');
-    messages = ((all && all.messages) || []).filter(m => Number(m.seq) > 0 && Number(m.seq) <= next && (m.to === 'all' || m.to === 'hark' || m.to === 'mu' || /^hark\./.test(m.to || '') || /^mu\./.test(m.to || ''))).sort((x, y) => x.seq - y.seq);
+    messages = ((all && all.messages) || []).filter(m => Number(m.seq) > 0 && Number(m.seq) <= next && (m.to === 'all' || m.to === 'hark' || /^hark\./.test(m.to || ''))).sort((x, y) => x.seq - y.seq);
   }
   const collab = accounts.filter(isCollabAccount);
-  const ring = new Map(); // accId -> [msg]
+  const ring = new Map();
   for (const m of messages) {
     let targets = [];
     const wh = /^hark\.([A-Z]{4})$/.exec(m.to || '');
-    const wm = /^mu\.([A-Z]{4})$/.exec(m.to || '');
-    if (wh) targets = collab.filter(a => siteSeries(a) === 'hark' && mailAddr(a) === '#' + wh[1]);
-    else if (wm) targets = collab.filter(a => siteSeries(a) === 'mu' && mailAddr(a) === '#' + wm[1]);
-    else if (m.to === 'hark') targets = collab.filter(a => siteSeries(a) === 'hark' && loginState[a.id]);
-    else if (m.to === 'mu') targets = collab.filter(a => siteSeries(a) === 'mu' && loginState[a.id]);
+    if (wh) targets = collab.filter(a => mailAddr(a) === '#' + wh[1]);
+    else if (m.to === 'hark') targets = collab.filter(a => loginState[a.id]);
     else if (m.to === 'all') targets = collab.filter(a => loginState[a.id]);
-    targets = targets.filter(a => siteAddr(a) !== m.from); // 不提醒发信人自己
+    // 忽略历史 mu.* / to=mu 信件：Muse 已下线
+    targets = targets.filter(a => siteAddr(a) !== m.from);
     for (const a of targets) { if (!ring.has(a.id)) ring.set(a.id, []); ring.get(a.id).push(m); }
   }
   for (const [id, ms] of ring) {
     const a = accounts.find(x => x.id === id);
     const lines = ms.map(m => `• 来自 ${m.from}${m.title ? '「' + m.title + '」' : ''}（${m.bytes || 0} 字节）\n  读取：curl -s ${SITE}/api/message/${m.id}`).join('\n');
-    const raw = `📨 你有 ${ms.length} 封新信（收件地址 ${siteAddr(a)}）\n${lines}\n\n读完请 ack：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"。需要回信就用你的 token POST ${SITE}/api/message，to 填对方地址（hark.XXXX 或 mu.XXXX）。规则见 ${SITE}/notice.md。${quotaText(a) ? `\n你现在${quotaText(a)}；要拉别的窗口帮忙先查额度：\ncurl -s "${SITE}/api/quota?series=hark"\ncurl -s "${SITE}/api/quota?series=mu"` : ''}`;
+    const raw = `📨 你有 ${ms.length} 封新信（收件地址 ${siteAddr(a)}）\n${lines}\n\n读完请 ack：curl -s -X POST ${SITE}/api/message/<id>/ack -H "Authorization: Bearer <你的token>"。需要回信就用你的 token POST ${SITE}/api/message，to 填对方地址（hark.XXXX）。规则见 ${SITE}/notice.md。${quotaText(a) ? `\n你现在${quotaText(a)}；要拉别的窗口帮忙先查额度：\ncurl -s "${SITE}/api/quota?series=hark"` : ''}`;
     const L = { id: 'b' + Date.now().toString(36) + id.slice(-3), at: Date.now(), from: null, fromName: ms.length === 1 ? ms[0].from : `${ms.length} 封网站来信`, to: id, toName: a.name, subject: ms.length === 1 ? (ms[0].title || '网站来信') : ms.map(m => m.title || m.from).join('；').slice(0, 60), body: raw, raw, status: 'queued', note: '', site: true };
     mail.letters.push(L);
   }
