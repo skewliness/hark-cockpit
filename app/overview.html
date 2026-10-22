@@ -1,12 +1,12 @@
 <!doctype html><html lang="zh"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; script-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net data:; script-src 'self' 'unsafe-inline'">
 <link rel="stylesheet" href="theme.css">
 <style>
 body{background:var(--dusk);overflow:auto}
 .wrap{max-width:980px;margin:0 auto;padding:40px 40px 56px}
 header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px}
 .hello{display:flex;align-items:center;gap:12px;margin-bottom:14px}
-.hello .pic{width:52px;height:52px;flex:none;animation:bob 4.5s ease-in-out infinite}
+.hello .pic{width:160px;height:100px;flex:none}
 .hello b{display:block;font:400 22px/1.2 var(--hand);letter-spacing:1px;color:var(--paper)}
 .hello span{display:block;margin-top:2px;font-size:12.5px;color:var(--haze)}
 @keyframes bob{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-3px) rotate(-3deg)}}
@@ -55,7 +55,7 @@ code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 
 </style></head><body>
 <div class="wrap">
   <header>
-    <div><div class="hello" id="hello"><svg class="pic" id="pic" viewBox="0 0 64 64" aria-hidden="true"></svg><div><b id="hiT"></b><span id="hiS"></span></div></div><h1 id="headline">还没有账号</h1><div class="ver" id="ver"></div></div>
+    <div><div class="hello" id="hello"><svg class="pic" id="pic" viewBox="0 0 160 100" aria-hidden="true"></svg><div><b id="hiT"></b><span id="hiS"></span></div></div><h1 id="headline">还没有账号</h1><div class="ver" id="ver"></div></div>
     <button class="btn pri" id="addBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>添加账号</button>
   </header>
   <div id="qtip"></div>
@@ -70,6 +70,7 @@ code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 
   </section>
 </div>
 <div id="dlg"><div class="box"><div class="t" id="dt"></div><input id="di"><div class="b"><button class="btn" id="dc">取消</button><button class="btn pri" id="dok">确定</button></div></div></div>
+<script src="girl-a.js"></script><script src="girl-b.js"></script>
 <script>
 const TINTS=[['#3B4A5C','#BFD3EA'],['#2F4A47','#A8DCCB'],['#4A3F57','#D6C5EA'],['#55413F','#EBC3B8'],['#504631','#E8D3A2'],['#3C4A35','#C6DDB0']];
 const tint=s=>{let h=0;for(const c of s||'')h=(h*31+c.charCodeAt(0))>>>0;return TINTS[h%TINTS.length]};
@@ -82,18 +83,40 @@ function ask(title,def,cb,withInput=true,okText){dt.textContent=title;di.style.d
 let st={accounts:[],activeId:null},animated=false;
 const addAcc=()=>ask('给新账号起个名字','Hark '+(st.accounts.length+1),name=>cockpit.add({name}),true,'添加账号');
 addBtn.onclick=addAcc;
-// 问候：按电脑本地时间分成五段，每段一张小插画
-const face=(y,c='#2A2216')=>`<circle cx="25" cy="${y}" r="2.2" fill="${c}"/><circle cx="39" cy="${y}" r="2.2" fill="${c}"/><path d="M27.5 ${y+6}q4.5 4 9 0" stroke="${c}" stroke-width="2.2" fill="none" stroke-linecap="round"/><ellipse cx="21" cy="${y+5}" rx="3" ry="1.8" fill="#E8907A" opacity=".75"/><ellipse cx="43" cy="${y+5}" rx="3" ry="1.8" fill="#E8907A" opacity=".75"/>`;
-const rays=(r1,r2,n=8)=>Array.from({length:n},(_,i)=>{const a=i/n*Math.PI*2,c=Math.cos(a),s=Math.sin(a);return `<line x1="${32+c*r1}" y1="${32+s*r1}" x2="${32+c*r2}" y2="${32+s*r2}"/>`}).join('');
+// 问候插画：照用户头像画的 Q 版小人（插画内嵌为 webp），外面的太阳、月亮、云、热气和 zZ 用 SVG 动画
+const GIRL=window.GIRL||{};
+const C={sun:'#F2C46D',moon:'#E9DFC4',gold:'#D8B06A'};
+const anim=(a,v,d,x='')=>`<animate attributeName="${a}" values="${v}" dur="${d}" repeatCount="indefinite" ${x}/>`;
+const spin=(t,v,d,x='')=>`<animateTransform attributeName="transform" type="${t}" values="${v}" dur="${d}" repeatCount="indefinite" ${x}/>`;
+const girl=(k,x,y,w,h,motion)=>`<g>${motion}<image href="data:image/webp;base64,${GIRL[k]}" x="${x}" y="${y}" width="${w}" height="${h}"/></g>`;
+const star=(x,y,r,d)=>`<path d="M${x} ${y-r}L${x+r*.3} ${y-r*.3}L${x+r} ${y}L${x+r*.3} ${y+r*.3}L${x} ${y+r}L${x-r*.3} ${y+r*.3}L${x-r} ${y}L${x-r*.3} ${y-r*.3}Z" fill="${C.gold}">${anim('opacity','1;.2;1',d)}</path>`;
+const rays=(cx,cy,r1,r2,n)=>Array.from({length:n},(_,i)=>{const a=i/n*Math.PI*2;return `<line x1="${cx+Math.cos(a)*r1}" y1="${cy+Math.sin(a)*r1}" x2="${cx+Math.cos(a)*r2}" y2="${cy+Math.sin(a)*r2}"/>`}).join('');
+const sunAt=(cx,cy,r)=>`<g stroke="${C.sun}" stroke-width="2.6" stroke-linecap="round">${rays(cx,cy,r+4,r+8,8)}${spin('rotate',`0 ${cx} ${cy};45 ${cx} ${cy}`,'6s')}</g><circle cx="${cx}" cy="${cy}" r="${r}" fill="${C.sun}"/>`;
+const moonAt=(x,y,s)=>`<g transform="translate(${x},${y}) scale(${s})"><path d="M6-12A13 13 0 1 0 14 6A10 10 0 0 1 6-12Z" fill="${C.moon}"/></g>`;
+const ground='<path d="M8 93h144" stroke="#4A5560" stroke-width="1.6" stroke-linecap="round"/>';
+const steam=(x,y)=>`<g stroke="#C9D6DF" stroke-width="1.1" fill="none" stroke-linecap="round"><path d="M${x} ${y}q-2-3 0-6q2-3 0-6">${anim('opacity','0;.9;0','2.4s')}${spin('translate','0 2;0 -3','2.4s')}</path><path d="M${x+4} ${y}q-2-3 0-6q2-3 0-6">${anim('opacity','0;.9;0','2.4s','begin="1.2s"')}${spin('translate','0 2;0 -3','2.4s','begin="1.2s"')}</path></g>`;
 const SCENES={
-  morning:{t:'早上好',s:'新的一天，从哪个账号开始？',svg:`<path d="M6 48h52" stroke="#6B767E" stroke-width="2.4" stroke-linecap="round"/><clipPath id="hz"><rect width="64" height="47"/></clipPath><g clip-path="url(#hz)"><g stroke="#F2C46D" stroke-width="3" stroke-linecap="round">${rays(20,26,7)}</g><circle cx="32" cy="40" r="15" fill="#F2C46D"/></g><g transform="translate(0,8)">${face(30)}</g>`},
-  noon:{t:'中午好',s:'记得吃饭，聊天可以等等',svg:`<g stroke="#F2C46D" stroke-width="3" stroke-linecap="round">${rays(21,27)}</g><circle cx="32" cy="32" r="16" fill="#F2C46D"/>${face(30)}`},
-  afternoon:{t:'下午好',s:'来杯茶，接着忙',svg:`<g stroke="#F2C46D" stroke-width="2.6" stroke-linecap="round" transform="translate(-6,-6)">${rays(15,20)}</g><circle cx="26" cy="26" r="12" fill="#F2C46D"/><path d="M18 50a9 9 0 0 1 3-17.5 12 12 0 0 1 22.5-2A8.5 8.5 0 0 1 50 50z" fill="#C9D6DF"/><g transform="translate(9,12)">${face(28,'#3A4550')}</g>`},
-  evening:{t:'晚上好',s:'今天辛苦了',svg:`<path d="M42 10a22 22 0 1 0 12 30A18 18 0 0 1 42 10z" fill="#E9DFC4"/><g transform="translate(-4,4)">${face(32,'#3A4550')}</g><path d="M50 12l1.4 3 3 1.4-3 1.4-1.4 3-1.4-3-3-1.4 3-1.4z" fill="#D8B06A"/><circle cx="57" cy="28" r="1.6" fill="#D8B06A"/>`},
-  night:{t:'夜深了',s:'别熬太晚，明天再聊也行',svg:`<path d="M40 12a20 20 0 1 0 12 28A16 16 0 0 1 40 12z" fill="#E9DFC4"/><g transform="translate(-6,6)"><path d="M21.5 30q3 2.5 6 0M35.5 30q3 2.5 6 0" stroke="#3A4550" stroke-width="2.2" fill="none" stroke-linecap="round"/><circle cx="31.5" cy="37" r="2" fill="#3A4550"/></g><text x="44" y="18" font-size="10" font-weight="700" fill="#97A1A8" font-family="sans-serif">z</text><text x="51" y="10" font-size="7" font-weight="700" fill="#6B767E" font-family="sans-serif">z</text>`}
+  morning:{t:'早上好',s:'新的一天，从哪个账号开始？',svg:`${ground}<clipPath id="hz"><rect width="160" height="92"/></clipPath>
+    <g clip-path="url(#hz)"><g>${sunAt(36,74,15)}${spin('translate','0 6;0 -2;0 6','6s')}</g></g>
+    ${star(66,16,3,'1.6s')}${star(150,30,2.4,'2.1s')}${star(20,28,2,'2.6s')}
+    ${girl('morning',74,5,78,88,spin('translate','0 0;0 -4;0 0','1s','calcMode="spline" keyTimes="0;.5;1" keySplines=".3 0 .7 1;.3 0 .7 1"'))}`},
+  noon:{t:'中午好',s:'记得吃饭，聊天可以等等',svg:`${ground}${sunAt(36,30,12)}${star(62,58,2,'2s')}
+    ${girl('noon',86,5,58.5,88,spin('translate','0 0;0 -1.5;0 0','1.4s'))}`},
+  afternoon:{t:'下午好',s:'来杯茶，接着忙',svg:`${ground}${sunAt(34,28,11)}
+    <g>${spin('translate','0 0;14 0;0 0','10s')}<path d="M20 54a8 8 0 0 1 3-15.5 11 11 0 0 1 20-2A7.5 7.5 0 0 1 49 54z" fill="#C9D6DF" opacity=".85"/></g>
+    ${girl('afternoon',86,9,64,84,spin('rotate','-1.5 118 93;1.5 118 93;-1.5 118 93','4s'))}${steam(101,54)}`},
+  evening:{t:'晚上好',s:'今天辛苦了',svg:`<rect x="10" y="12" width="34" height="30" rx="4" fill="#2C363F" stroke="#4A5560" stroke-width="1.6"/>${moonAt(29,27,.7)}${star(18,18,1.8,'2.4s')}${star(56,14,2,'3s')}
+    <circle cx="101" cy="60" r="9" fill="#FFE7A8" opacity=".25">${anim('opacity','.15;.35;.15','3s')}</circle>
+    ${girl('evening',64,3,89,92,spin('translate','0 0;0 -.8;0 0','4s'))}`},
+  night:{t:'夜深了',s:'别熬太晚，明天再聊也行',svg:`${moonAt(28,24,.9)}${star(52,14,2.2,'2.2s')}${star(14,46,1.8,'3s')}${star(150,12,1.6,'2.6s')}
+    ${girl('night',60,12,96,88,spin('translate','0 0;0 -.8;0 0','3.6s'))}
+    <g font-family="sans-serif" font-weight="700" fill="#97A1A8">
+      <text x="112" y="30" font-size="9">z${anim('opacity','0;1;0','3s')}${spin('translate','0 6;6 -6','3s')}</text>
+      <text x="122" y="20" font-size="12">Z${anim('opacity','0;1;0','3s','begin="1.5s"')}${spin('translate','0 6;6 -6','3s','begin="1.5s"')}</text>
+    </g>`},
 };
 function greet(){const h=new Date().getHours();const k=h<5||h>=23?'night':h<11?'morning':h<14?'noon':h<18?'afternoon':'evening';
-  if(greet.k===k)return;greet.k=k;const g=SCENES[k];pic.innerHTML=g.svg;hiT.textContent=g.t;hiS.textContent=g.s;}
+  if(greet.k===k)return;greet.k=k;const g=SCENES[k];pic.innerHTML=g.svg;if(matchMedia('(prefers-reduced-motion: reduce)').matches)pic.pauseAnimations();hiT.textContent=g.t;hiS.textContent=g.s;}
 greet();setInterval(greet,60000);
 const fmtN=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e4?(n/1e3).toFixed(0)+'K':String(Math.round(n));
 const fmtT=t=>{const d=new Date(t);return isNaN(d)?String(t):`${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`};
