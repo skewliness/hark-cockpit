@@ -29,6 +29,8 @@ h1{margin:0;font:400 34px/1.15 var(--hand);letter-spacing:1px}
 .q .bar{grid-column:1/-1;height:4px;border-radius:4px;background:var(--seam);overflow:hidden}
 .q .bar i{display:block;height:100%;border-radius:4px;background:var(--jade)}
 .q.warn .bar i{background:var(--brass)}.q.hot .bar i{background:var(--rust)}.q.hot em{color:var(--rust)}
+.q .rs{grid-column:1/-1;display:flex;justify-content:space-between;gap:8px;font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.q .rs b{font-weight:500;color:var(--haze)}
 .qmsg{font-size:12px;color:var(--dim)}
 .tip{margin-top:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;border-radius:12px;border:1px dashed rgba(216,176,106,.45);color:var(--haze);font-size:12.5px}
 .tip b{color:var(--paper);font-weight:500}
@@ -128,6 +130,11 @@ function greet(){const h=new Date().getHours();const k=h<5||h>=23?'night':h<11?'
 greet();setInterval(greet,60000);
 const fmtN=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e4?(n/1e3).toFixed(0)+'K':String(Math.round(n));
 const fmtT=t=>{const d=new Date(t);return isNaN(d)?String(t):`${d.getMonth()+1}月${d.getDate()}日 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`};
+function fmtLeft(t){const ms=new Date(t)-Date.now();if(isNaN(ms))return '';if(ms<=0)return '即将重置';
+  const m=Math.floor(ms/6e4),d=Math.floor(m/1440),h=Math.floor(m%1440/60),mm=m%60;
+  return '还剩 '+(d?`${d}天${h}小时`:h?`${h}小时${mm}分`:`${Math.max(mm,1)}分钟`);}
+setInterval(()=>{let due=false;document.querySelectorAll('[data-reset]').forEach(el=>{el.textContent=fmtLeft(el.dataset.reset);if(new Date(el.dataset.reset)<=Date.now())due=true});
+  if(due&&!fmtLeft.asked){fmtLeft.asked=true;setTimeout(()=>{fmtLeft.asked=false;cockpit.refreshUsage()},60000)}},30000);
 function quota(a){
   if(!a.loggedIn)return '<span class="qmsg">登录后显示额度</span>';
   if(!st.usageReady)return '<span class="qmsg">额度待识别</span>';
@@ -136,7 +143,8 @@ function quota(a){
   return u.buckets.slice(0,2).map(b=>{const p=b.pct??0,cls=p>=90?'hot':p>=70?'warn':'';
     const val=b.used!=null&&b.limit!=null?`${fmtN(b.used)} / ${fmtN(b.limit)}`:`已用 ${p}%`;
     const t=b.resets?`${fmtT(b.resets)} 重置`:'';
-    return `<div class="q ${cls}" title="${t}"><span>${b.label}</span><em>${val}</em><div class="bar"><i style="width:${p}%"></i></div></div>`}).join('');
+    const rs=b.resets?`<div class="rs"><span>${t}</span><b data-reset="${b.resets}">${fmtLeft(b.resets)}</b></div>`:'';
+    return `<div class="q ${cls}" title="${t}"><span>${b.label}</span><em>${val}</em><div class="bar"><i style="width:${p}%"></i></div>${rs}</div>`}).join('');
 }
 function renderTip(){
   if(!st.accounts.some(a=>a.loggedIn)){qtip.innerHTML='<div class="qhead"><button id="ex3">导出诊断文件</button></div>';ex3.onclick=()=>cockpit.exportDiag();return;}
