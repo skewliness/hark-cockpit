@@ -20,10 +20,14 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
 .acc .mono-av{width:30px;height:30px;font-size:13px}
 .meta{flex:1;min-width:0}
 .meta b{display:block;font-size:13.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.st{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim)}
+.st{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden}
+.st>*{flex:none}
+.nm{display:flex;align-items:center;gap:6px;min-width:0}
+.nm b{min-width:0}
+.tag{flex:none;font-size:10.5px;line-height:16px;padding:0 6px;border-radius:5px;background:rgba(201,164,92,.16);color:var(--brass);white-space:nowrap}
 .st.ok{color:var(--jade)}
 .st .lamp{width:6px;height:6px}
-.st .q{margin-left:6px;color:var(--haze)}.st .q.hot{color:var(--rust)}.acc.on .st .q{color:var(--paper)}
+.st .q{margin-left:auto;display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--jade)}.bat{position:relative;width:22px;height:11px;border:1.2px solid currentColor;border-radius:3.5px;box-sizing:border-box;opacity:.85}.bat::after{content:'';position:absolute;right:-3.5px;top:3px;width:2px;height:3px;border-radius:0 1px 1px 0;background:currentColor}.bat i{position:absolute;left:1px;top:1px;bottom:1px;border-radius:1.5px;background:currentColor;min-width:1.5px}.st .q.mid{color:var(--brass)}.st .q.low{color:var(--rust)}
 .key{font-size:11px;color:var(--dim)}
 .acc:hover .key,.acc.on .key{color:var(--haze)}
 .foot{padding:12px;border-top:1px solid #161C21}
@@ -77,14 +81,14 @@ function askAdd(cb){
   dc.onclick=()=>done(null);
   i.onkeydown=e=>{if(e.key==='Enter')ok.click();if(e.key==='Escape')dc.click()};
 }
-const daily=a=>{const b=a.usage&&a.usage.buckets&&(a.usage.buckets.find(x=>/day|daily/.test(x.key))||a.usage.buckets[0]);return b&&b.pct!=null?`<span class="q ${b.pct>=90?'hot':''}">${/day|daily/.test(b.key)?'今日':''}已用 ${b.pct}%</span>`:''};
+const daily=a=>{const b=a.usage&&a.usage.buckets&&(a.usage.buckets.find(x=>/day|daily/.test(x.key))||a.usage.buckets[0]);if(!b||b.pct==null)return '';const left=Math.max(0,Math.min(100,100-Number(b.pct)));const L=Math.round(left);return `<span class="q ${left<=20?'low':left<=50?'mid':''}" title="今日已用 ${b.pct}%，剩 ${Math.round(left*10)/10}%">${L}%<span class="bat"><i style="width:calc((100% - 2px) * ${(left/100).toFixed(3)})"></i></span></span>`};
 let st={accounts:[],activeId:null,showHome:false},ctxId=null;
 function render(){
   list.innerHTML='';cnt.textContent=st.accounts.length;homeBtn.classList.toggle('on',!!st.showHome);
   st.accounts.forEach((a,i)=>{
     const [bg,fg]=tint(a.name);const el=document.createElement('button');
     el.className='acc'+(!st.showHome&&a.id===st.activeId?' on':'');
-    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><b></b><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.loggedIn?'已登录':'未登录'}${a.inboxUrl?'<span class="q">项目收信</span>':''}${daily(a)}</div></div>${i<9?`<span class="key">Ctrl ${i+1}</span>`:''}`;
+    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><div class="nm"><b></b>${a.inboxUrl?'<span class="tag" title="来信投到项目">项目</span>':''}</div><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span><span>${a.loggedIn?'已登录':'未登录'}</span>${daily(a)}</div></div>`;
     el.querySelector('.mono-av').textContent=(a.name||'H').trim()[0].toUpperCase();el.querySelector('b').textContent=a.name;
     el.onclick=()=>cockpit.switchTo(a.id);
     el.oncontextmenu=e=>{e.preventDefault();ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-170)+'px';menu.style.top=Math.min(e.clientY,innerHeight-200)+'px';menu.style.display='block'};
