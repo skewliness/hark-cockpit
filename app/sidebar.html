@@ -105,7 +105,7 @@ let editMode=false,order=null,drag=null,lp=null,stDirty=false,suppressClick=0,sa
 const merged=()=>{const ids=st.accounts.map(a=>a.id);if(!order)return ids;const set=new Set(ids);const keep=order.filter(id=>set.has(id));const ks=new Set(keep);return keep.concat(ids.filter(id=>!ks.has(id)));};
 function viewAccounts(){const by=new Map(st.accounts.map(a=>[a.id,a]));return merged().map(id=>by.get(id));}
 function render(){
-  if(drag){stDirty=true;return;}   // 按住/拖动中不重绘（重绘会丢掉指针捕获）：松手后再应用
+  if(drag||lp){stDirty=true;return;}   // 按住/拖动中不重绘（重绘会丢掉指针捕获）：松手后再应用
   stDirty=false;
   if(editMode)order=merged();
   list.classList.toggle('edit',editMode);
@@ -118,7 +118,7 @@ function render(){
     el.dataset.id=a.id;
     el.onclick=e=>{if(editMode||Date.now()<suppressClick){e.preventDefault();return;}cockpit.switchTo(a.id);};
     el.onpointerdown=e=>rowDown(e,el,a.id);
-    el.oncontextmenu=e=>{e.preventDefault();if(lp){clearTimeout(lp.t);lp=null;}if(editMode||drag)return;ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-170)+'px';menu.style.top=Math.min(e.clientY,innerHeight-200)+'px';menu.style.display='block'};
+    el.oncontextmenu=e=>{e.preventDefault();if(lp){clearTimeout(lp.t);lp=null;if(stDirty)render();}if(editMode||drag)return;ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-170)+'px';menu.style.top=Math.min(e.clientY,innerHeight-200)+'px';menu.style.display='block'};
     list.appendChild(el);
   });
 }
@@ -181,13 +181,13 @@ function endDrag(apply){
   if(apply&&order)saveOrder(merged());   // 松手且顺序有变化：立即保存，留在编辑模式（顺序没变时 saveOrder 自己会跳过）
 }
 document.addEventListener('pointermove',e=>{
-  if(lp&&e.pointerId===lp.pid&&Math.hypot(e.clientX-lp.x,e.clientY-lp.y)>=SLOP){clearTimeout(lp.t);lp=null;return;}
+  if(lp&&e.pointerId===lp.pid&&Math.hypot(e.clientX-lp.x,e.clientY-lp.y)>=SLOP){clearTimeout(lp.t);lp=null;if(stDirty)render();return;}
   if(!drag||e.pointerId!==drag.pid)return;
   if(!drag.moving){if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<SLOP)return;drag.moving=true;drag.st=list.scrollTop;drag.el.classList.add('drag');list.querySelectorAll('.acc').forEach(r=>{if(r!==drag.el)r.classList.add('slide');});}
   drag.cy=e.clientY;moveDrag(e.clientY);if(!scrollRAF)scrollRAF=requestAnimationFrame(autoScroll);
 },true);
 const up=e=>{
-  if(lp&&e.pointerId===lp.pid){clearTimeout(lp.t);lp=null;return;}   // 普通点击：交给 onclick 切换账号
+  if(lp&&e.pointerId===lp.pid){clearTimeout(lp.t);lp=null;if(stDirty)render();return;}   // 普通点击：交给 onclick 切换账号
   if(!drag||e.pointerId!==drag.pid)return;
   suppressClick=Date.now()+400;
   if(e.type==='pointercancel'){endDrag(false);return;}
@@ -201,7 +201,7 @@ document.addEventListener('pointerdown',e=>{
   exitEdit();   // 点空白处退出并保存
 },true);
 // 侧栏失焦（用户点了右侧页面等）：结束拖拽并退出编辑，免得 sidebarEditing 卡在 true 吞掉 Ctrl+1–9
-window.addEventListener('blur',()=>{if(lp){clearTimeout(lp.t);lp=null;}if(drag)endDrag(true);exitEdit();});
+window.addEventListener('blur',()=>{if(lp){clearTimeout(lp.t);lp=null;if(stDirty)render();}if(drag)endDrag(true);exitEdit();});
 menu.onclick=e=>{e.stopPropagation();menu.style.display='none';const act=e.target.dataset.a,id=ctxId;if(!act||!id)return;const a=st.accounts.find(x=>x.id===id);
   if(act==='rename')ask('重命名账号',a&&a.name,n=>cockpit.rename(id,n));
   if(act==='reload')cockpit.reload(id);
