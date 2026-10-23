@@ -3,6 +3,8 @@ contextBridge.exposeInMainWorld('cockpit', {
   add: (o) => ipcRenderer.invoke('add', o),
   switchTo: (id) => ipcRenderer.invoke('switch', id),
   rename: (id, name) => ipcRenderer.invoke('rename', { id, name }),
+  reorder: (ids) => ipcRenderer.invoke('reorder', ids),
+  setEditing: (on) => ipcRenderer.invoke('setEditing', !!on),
   reload: (id) => ipcRenderer.invoke('reload', id),
   setInbox: (id, mode) => ipcRenderer.invoke('setInbox', { id, mode }),
   remove: (id) => ipcRenderer.invoke('remove', id),

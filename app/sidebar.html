@@ -48,6 +48,18 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
 #dk label{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:34px;border-radius:8px;border:1px solid var(--seam);background:var(--ledge);cursor:pointer;font-size:13px;color:var(--haze)}
 #dk label.on{border-color:var(--brass);color:var(--paper);background:var(--raise)}
 #dk input{accent-color:var(--brass)}
+/* 拖拽排序：长按进入编辑模式，行轻微抖动（rotate 属性），拖动用 translate 属性，两者互不覆盖 */
+@keyframes jig{0%{rotate:-.7deg}50%{rotate:.7deg}100%{rotate:-.7deg}}
+#list.edit .acc{animation:jig .26s ease-in-out infinite;touch-action:none;cursor:grab}
+#list.edit .acc:nth-child(2n){animation-duration:.3s;animation-delay:-.11s}
+#list.edit .acc:nth-child(3n){animation-delay:-.07s}
+#list.edit .acc.drag{animation:none;cursor:grabbing;z-index:5;background:var(--raise2);box-shadow:0 10px 24px rgba(0,0,0,.45)}
+#list.edit .acc.drag::before{display:none}
+#list.edit .acc.slide{transition:translate .16s cubic-bezier(.2,.8,.2,1)}
+@media (prefers-reduced-motion: reduce){
+  #list.edit .acc{animation:none;outline:1px dashed var(--seam);outline-offset:-1px}
+  #list.edit .acc.slide{transition:none}
+}
 </style></head><body>
 <div class="brand"><div class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="#2A2216"><path d="M4 19c3.5-7 8-11.5 16-14-3 4-4.4 8.3-3.8 14.2C12.4 16.6 8.4 16.7 4 19z"/></svg></div><b>Hark Tools<span>by Miracle AI</span></b></div>
 <button class="nav" id="homeBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>总览</button>
@@ -60,57 +72,146 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
   <div class="tools"><button id="ver" title="检查更新"></button>
   <button class="ib" id="chk" title="检查更新"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/></svg></button></div>
 </div>
-<div id="dlg"><div class="box"><div class="t" id="dt"></div><div id="dk"><label class="on"><input type="radio" name="ak" value="hark" checked>Hark</label><label><input type="radio" name="ak" value="muse">Muse</label></div><input id="di"><div class="b"><button class="btn" id="dc">取消</button><button class="btn pri" id="do">确定</button></div></div></div>
-<div id="menu"><div data-a="rename">重命名</div><div data-a="reload">刷新页面</div><hr><div data-a="inboxHere">信箱：在当前打开的项目收信</div><div data-a="inboxChat">信箱：改回在聊天收信</div><hr><div data-a="diag">导出诊断文件</div><hr><div data-a="remove" class="danger">删除并清除登录</div></div>
+<div id="dlg"><div class="box"><div class="t" id="dt"></div><input id="di"><div class="b"><button class="btn" id="dc">取消</button><button class="btn pri" id="do">确定</button></div></div></div>
+<div id="menu"><div data-a="rename">重命名</div><div data-a="reload">刷新页面</div><hr><div data-a="teach">发说明（只发这个窗口）</div><div data-a="inboxHere">信箱：在当前打开的项目收信</div><div data-a="inboxChat">信箱：改回在聊天收信</div><hr><div data-a="diag">导出诊断文件</div><hr><div data-a="remove" class="danger">删除并清除登录</div></div>
 <script>
 const TINTS=[['#3B4A5C','#BFD3EA'],['#2F4A47','#A8DCCB'],['#4A3F57','#D6C5EA'],['#55413F','#EBC3B8'],['#504631','#E8D3A2'],['#3C4A35','#C6DDB0']];
 const tint=s=>{let h=0;for(const c of s||'')h=(h*31+c.charCodeAt(0))>>>0;return TINTS[h%TINTS.length]};
-const MUSE_URL='https://muse.ai';
-function ask(title,def,cb,withInput=true){const i=di,ok=document.getElementById('do');dt.textContent=title;dk.style.display='none';i.style.display=withInput?'':'none';i.value=def||'';dlg.style.display='flex';
+function ask(title,def,cb,withInput=true){const i=di,ok=document.getElementById('do');dt.textContent=title;i.style.display=withInput?'':'none';i.value=def||'';dlg.style.display='flex';
  ok.textContent=withInput?'确定':'删除';ok.className='btn '+(withInput?'pri':'danger');if(withInput){i.focus();i.select();}else ok.focus();
  const done=v=>{dlg.style.display='none';ok.onclick=dc.onclick=i.onkeydown=null;if(v!==null)cb(v)};
  ok.onclick=()=>done(withInput?(i.value.trim()||def):true);dc.onclick=()=>done(null);
  i.onkeydown=e=>{if(e.key==='Enter')ok.click();if(e.key==='Escape')dc.click()};}
 function askAdd(cb){
   const i=di,ok=document.getElementById('do');
-  const defName=k=>' '+(st.accounts.filter(a=>(a.kind==='muse')===(k==='muse')).length+1);
-  const syncName=()=>{const k=dk.querySelector('input:checked').value;const prefix=k==='muse'?'Muse':'Hark';if(!i.dataset.touched||/^Hark \d+$|^Muse \d+$/.test(i.value.trim()))i.value=prefix+defName(k);};
-  dt.textContent='添加账号';dk.style.display='flex';i.style.display='';i.dataset.touched='';i.value='Hark'+defName('hark');
-  dk.querySelectorAll('label').forEach(l=>{l.classList.toggle('on',l.querySelector('input').value==='hark');l.querySelector('input').checked=l.querySelector('input').value==='hark';});
+  const defName=()=>' '+(st.accounts.length+1);
+  dt.textContent='添加账号';i.style.display='';i.dataset.touched='';i.value='Hark'+defName();
   dlg.style.display='flex';ok.textContent='确定';ok.className='btn pri';i.focus();i.select();
-  const onKind=()=>{dk.querySelectorAll('label').forEach(l=>l.classList.toggle('on',l.querySelector('input').checked));syncName();};
-  dk.onchange=onKind;i.oninput=()=>{i.dataset.touched='1'};
-  const done=v=>{dlg.style.display='none';ok.onclick=dc.onclick=i.onkeydown=dk.onchange=i.oninput=null;if(v!==null)cb(v)};
-  ok.onclick=()=>{const k=dk.querySelector('input:checked').value;const name=i.value.trim()||((k==='muse'?'Muse':'Hark')+defName(k));done({name,kind:k,url:k==='muse'?MUSE_URL:undefined})};
+  i.oninput=()=>{i.dataset.touched='1'};
+  const done=v=>{dlg.style.display='none';ok.onclick=dc.onclick=i.onkeydown=i.oninput=null;if(v!==null)cb(v)};
+  ok.onclick=()=>{const name=i.value.trim()||('Hark'+defName());done({name,kind:'hark'})};
   dc.onclick=()=>done(null);
   i.onkeydown=e=>{if(e.key==='Enter')ok.click();if(e.key==='Escape')dc.click()};
 }
 const daily=a=>{const b=a.usage&&a.usage.buckets&&(a.usage.buckets.find(x=>/day|daily/.test(x.key))||a.usage.buckets[0]);if(!b||b.pct==null)return '';const left=Math.max(0,Math.min(100,100-Number(b.pct)));const L=Math.round(left);return `<span class="q ${left<=20?'low':left<=50?'mid':''}" title="今日已用 ${b.pct}%，剩 ${Math.round(left*10)/10}%">${L}%<span class="bat"><i style="width:calc((100% - 2px) * ${(left/100).toFixed(3)})"></i></span></span>`};
 let st={accounts:[],activeId:null,showHome:false},ctxId=null;
+// —— 拖拽排序状态 ——
+// order：编辑模式下的本地顺序（id 数组）；为 null 时按服务端 st.accounts 顺序显示
+// drag：正在按住的那一行；拖动中收到 state 只存到 st，不重绘（stDirty），松手后再合并
+const LP_MS=500,SLOP=6;
+let editMode=false,order=null,drag=null,lp=null,stDirty=false,suppressClick=0,saving=Promise.resolve();
+const merged=()=>{const ids=st.accounts.map(a=>a.id);if(!order)return ids;const set=new Set(ids);const keep=order.filter(id=>set.has(id));const ks=new Set(keep);return keep.concat(ids.filter(id=>!ks.has(id)));};
+function viewAccounts(){const by=new Map(st.accounts.map(a=>[a.id,a]));return merged().map(id=>by.get(id));}
 function render(){
+  if(drag){stDirty=true;return;}   // 按住/拖动中不重绘（重绘会丢掉指针捕获）：松手后再应用
+  stDirty=false;
+  if(editMode)order=merged();
+  list.classList.toggle('edit',editMode);
   list.innerHTML='';cnt.textContent=st.accounts.length;homeBtn.classList.toggle('on',!!st.showHome);
-  st.accounts.forEach((a,i)=>{
+  viewAccounts().forEach((a,i)=>{
     const [bg,fg]=tint(a.name);const el=document.createElement('button');
     el.className='acc'+(!st.showHome&&a.id===st.activeId?' on':'');
-    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><div class="nm"><b></b>${a.inboxUrl?'<span class="tag" title="来信投到项目">项目</span>':''}</div><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span><span>${a.kind==='muse'?'Muse · ':''}${a.loggedIn?'已登录':'未登录'}</span>${a.kind==='muse'?'':daily(a)}</div></div>`;
+    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><div class="nm"><b></b>${a.inboxUrl?'<span class="tag" title="来信投到项目">项目</span>':''}</div><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span><span>${a.loggedIn?'已登录':'未登录'}</span>${daily(a)}</div></div>`;
     el.querySelector('.mono-av').textContent=(a.name||'H').trim()[0].toUpperCase();el.querySelector('b').textContent=a.name;
-    el.onclick=()=>cockpit.switchTo(a.id);
-    el.oncontextmenu=e=>{e.preventDefault();ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-170)+'px';menu.style.top=Math.min(e.clientY,innerHeight-200)+'px';menu.style.display='block'};
+    el.dataset.id=a.id;
+    el.onclick=e=>{if(editMode||Date.now()<suppressClick){e.preventDefault();return;}cockpit.switchTo(a.id);};
+    el.onpointerdown=e=>rowDown(e,el,a.id);
+    el.oncontextmenu=e=>{e.preventDefault();if(lp){clearTimeout(lp.t);lp=null;}if(editMode||drag)return;ctxId=a.id;menu.style.left=Math.min(e.clientX,innerWidth-170)+'px';menu.style.top=Math.min(e.clientY,innerHeight-200)+'px';menu.style.display='block'};
     list.appendChild(el);
   });
 }
 document.onclick=()=>menu.style.display='none';
+// —— 拖拽排序：pointer 事件 + setPointerCapture，不用 HTML5 drag ——
+function rowDown(e,el,id){
+  if(e.button!==0||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey||(e.pointerType==='mouse'&&e.buttons!==1))return;   // 只认纯左键；右键 / macOS Ctrl+点按照常弹菜单
+  if(drag||lp)return;
+  menu.style.display='none';
+  try{el.setPointerCapture(e.pointerId);}catch{}
+  const p={el,id,pid:e.pointerId,x:e.clientX,y:e.clientY,moving:false};
+  if(editMode){drag=p;}
+  else{lp={...p,t:setTimeout(()=>{if(!lp)return;const q=lp;lp=null;enterEdit();suppressClick=Date.now()+600;
+    // 长按后不松手可直接拖：编辑模式重绘了行，把捕获转到新的同 id 行上
+    const nel=list.querySelector(`.acc[data-id="${CSS.escape(q.id)}"]`);if(nel){try{nel.setPointerCapture(q.pid);}catch{}drag={...q,el:nel,fromLP:true};}},LP_MS)};}
+}
+// 进出编辑模式通知主进程：编辑中 Ctrl/Cmd+1–9 不按旧顺序跳
+function enterEdit(){if(editMode)return;editMode=true;order=st.accounts.map(a=>a.id);try{cockpit.setEditing&&cockpit.setEditing(true);}catch{}render();}
+function exitEdit(){if(!editMode)return;editMode=false;const ids=merged();if(drag)endDrag(false);order=null;render();try{cockpit.setEditing&&cockpit.setEditing(false);}catch{}saveOrder(ids);}
+// pendingOrder：已发出、还没回包的顺序。期间到达的 state 只更新字段，顺序仍按 pendingOrder 显示（不闪回）
+let pendingOrder=null;
+const sameIds=(a,b)=>a.length===b.length&&a.every((x,i)=>x===b[i]);
+function applyOrder(s,ids){const by=new Map(s.accounts.map(a=>[a.id,a]));const keep=ids.filter(id=>by.has(id)),ks=new Set(keep);return {...s,accounts:keep.map(id=>by.get(id)).concat(s.accounts.filter(a=>!ks.has(a.id)))};}
+// 只负责保存顺序；setEditing(false) 只在 exitEdit 里调（松手即存时仍留在编辑模式）
+function saveOrder(ids){
+  if(sameIds(ids,st.accounts.map(a=>a.id)))return;
+  pendingOrder=ids;st=applyOrder(st,ids);render();
+  const attempt=(want,retry)=>cockpit.reorder(want).then(async r=>{
+    if(r&&r.ok){if(pendingOrder===want)pendingOrder=null;return;}
+    const s=await cockpit.getState();
+    // 恰好有账号增删（length/unknown）：用最新账号表合并一次本次顺序再试；其它原因或重试仍失败 → 回滚到服务端顺序
+    if(retry&&r&&(r.error==='length'||r.error==='unknown')){const m=applyOrder(s,want).accounts.map(a=>a.id);pendingOrder=m;st=applyOrder(s,m);render();return attempt(m,false);}
+    pendingOrder=null;st=s;render();
+  });
+  saving=saving.then(()=>attempt(ids,true)).catch(()=>{pendingOrder=null;return cockpit.getState().then(s=>{st=s;render();}).catch(()=>{});});
+}
+function slotH(){const r=list.querySelector('.acc');return r?r.getBoundingClientRect().height+2:40;}
+let scrollRAF=0;
+function moveDrag(cy){
+  const d=drag,rows=[...list.querySelectorAll('.acc')],h=slotH(),from=rows.indexOf(d.el);if(from<0)return;
+  const dy=cy-d.y+(list.scrollTop-d.st);
+  d.el.style.translate=`0 ${dy}px`;
+  const to=Math.max(0,Math.min(rows.length-1,from+Math.round(dy/h)));d.to=to;d.from=from;d.toId=rows[to].dataset.id;
+  rows.forEach((r,i)=>{if(r===d.el)return;let s=0;if(from<to&&i>from&&i<=to)s=-h;if(from>to&&i<from&&i>=to)s=h;r.style.translate=s?`0 ${s}px`:'';});
+}
+function autoScroll(){
+  scrollRAF=0;if(!drag||!drag.moving)return;
+  const r=list.getBoundingClientRect(),E=28;let v=0;
+  if(drag.cy<r.top+E)v=-Math.ceil((r.top+E-drag.cy)/3);else if(drag.cy>r.bottom-E)v=Math.ceil((drag.cy-(r.bottom-E))/3);
+  if(v){const before=list.scrollTop;list.scrollTop+=v;if(list.scrollTop!==before)moveDrag(drag.cy);scrollRAF=requestAnimationFrame(autoScroll);}
+}
+function endDrag(apply){
+  const d=drag;drag=null;cancelAnimationFrame(scrollRAF);scrollRAF=0;if(!d)return;
+  if(apply&&d.moving&&d.to!=null&&d.from!=null&&d.to!==d.from){
+    // 按「落点那一行的 id」插入，而不是 DOM 行号：拖动中有账号增删时 merged() 已变，行号会偏
+    const ids=merged().filter(x=>x!==d.id);const at=ids.indexOf(d.toId);
+    if(at>=0){ids.splice(d.to>d.from?at+1:at,0,d.id);order=ids;}
+  }
+  render();   // 也顺带应用拖动期间攒下的 state
+  if(apply&&order)saveOrder(merged());   // 松手且顺序有变化：立即保存，留在编辑模式（顺序没变时 saveOrder 自己会跳过）
+}
+document.addEventListener('pointermove',e=>{
+  if(lp&&e.pointerId===lp.pid&&Math.hypot(e.clientX-lp.x,e.clientY-lp.y)>=SLOP){clearTimeout(lp.t);lp=null;return;}
+  if(!drag||e.pointerId!==drag.pid)return;
+  if(!drag.moving){if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<SLOP)return;drag.moving=true;drag.st=list.scrollTop;drag.el.classList.add('drag');list.querySelectorAll('.acc').forEach(r=>{if(r!==drag.el)r.classList.add('slide');});}
+  drag.cy=e.clientY;moveDrag(e.clientY);if(!scrollRAF)scrollRAF=requestAnimationFrame(autoScroll);
+},true);
+const up=e=>{
+  if(lp&&e.pointerId===lp.pid){clearTimeout(lp.t);lp=null;return;}   // 普通点击：交给 onclick 切换账号
+  if(!drag||e.pointerId!==drag.pid)return;
+  suppressClick=Date.now()+400;
+  if(e.type==='pointercancel'){endDrag(false);return;}
+  if(drag.moving)endDrag(true);
+  else{const lpUp=drag.fromLP;drag=null;if(lpUp){if(stDirty)render();}else exitEdit();}   // 长按进入后原地松手：留在编辑模式；编辑模式下「点一下」：退出并保存
+};
+document.addEventListener('pointerup',up,true);document.addEventListener('pointercancel',up,true);
+document.addEventListener('pointerdown',e=>{
+  if(!editMode)return;
+  if(e.target.closest&&e.target.closest('.acc'))return;
+  exitEdit();   // 点空白处退出并保存
+},true);
+// 侧栏失焦（用户点了右侧页面等）：结束拖拽并退出编辑，免得 sidebarEditing 卡在 true 吞掉 Ctrl+1–9
+window.addEventListener('blur',()=>{if(lp){clearTimeout(lp.t);lp=null;}if(drag)endDrag(true);exitEdit();});
 menu.onclick=e=>{e.stopPropagation();menu.style.display='none';const act=e.target.dataset.a,id=ctxId;if(!act||!id)return;const a=st.accounts.find(x=>x.id===id);
   if(act==='rename')ask('重命名账号',a&&a.name,n=>cockpit.rename(id,n));
   if(act==='reload')cockpit.reload(id);
   if(act==='inboxHere')cockpit.setInbox(id,'here');
   if(act==='inboxChat')cockpit.setInbox(id,'chat');
   if(act==='diag')cockpit.exportDiag();
+  if(act==='teach')cockpit.mailTeach(id);
   if(act==='remove')ask(`删除「${a?a.name:''}」并清除它的登录？`,'',()=>cockpit.remove(id),false);};
 add.onclick=()=>askAdd(o=>cockpit.add(o));
 homeBtn.onclick=()=>cockpit.home();
-document.addEventListener('keydown',e=>{const n=+e.key;if((e.ctrlKey||e.metaKey)&&n>=1&&n<=9&&st.accounts[n-1])cockpit.switchTo(st.accounts[n-1].id);});
-cockpit.onState(s=>{st=s;render()});cockpit.getState().then(s=>{st=s;render()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&editMode){e.preventDefault();exitEdit();return;}if(editMode)return;const n=+e.key;if((e.ctrlKey||e.metaKey)&&n>=1&&n<=9&&st.accounts[n-1])cockpit.switchTo(st.accounts[n-1].id);});
+cockpit.onState(s=>{st=pendingOrder?applyOrder(s,pendingOrder):s;render()});cockpit.getState().then(s=>{st=pendingOrder?applyOrder(s,pendingOrder):s;render()});
 const showVer=()=>cockpit.version().then(v=>ver.textContent='v'+v);showVer();
 const check=async()=>{ver.textContent='正在检查…';const r=await cockpit.checkUpdate();
   ver.textContent=r==='latest'?'已是最新版本':(r==='offline'?'连不上更新服务器':(r==='ready'?'新版本已下载':ver.textContent));setTimeout(showVer,2500);};
