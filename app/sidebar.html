@@ -25,7 +25,7 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
 .nm{display:flex;align-items:center;gap:6px;min-width:0}
 .nm b{min-width:0}
 .tag{flex:none;font-size:10.5px;line-height:16px;padding:0 6px;border-radius:5px;background:rgba(201,164,92,.16);color:var(--brass);white-space:nowrap}
-.st.ok{color:var(--jade)}
+.st.ok{color:var(--jade)}.st.busy{color:var(--rust)}
 .st .lamp{width:6px;height:6px}
 .st .q{margin-left:auto;display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--jade)}.bat{position:relative;width:22px;height:11px;border:1.2px solid currentColor;border-radius:3.5px;box-sizing:border-box;opacity:.85}.bat::after{content:'';position:absolute;right:-3.5px;top:3px;width:2px;height:3px;border-radius:0 1px 1px 0;background:currentColor}.bat i{position:absolute;left:1px;top:1px;bottom:1px;border-radius:1.5px;background:currentColor;min-width:1.5px}.st .q.mid{color:var(--brass)}.st .q.low{color:var(--rust)}
 .key{font-size:11px;color:var(--dim)}
@@ -94,6 +94,8 @@ function askAdd(cb){
   i.onkeydown=e=>{if(e.key==='Enter')ok.click();if(e.key==='Escape')dc.click()};
 }
 const daily=a=>{const b=a.usage&&a.usage.buckets&&(a.usage.buckets.find(x=>/day|daily/.test(x.key))||a.usage.buckets[0]);if(!b||b.pct==null)return '';const left=Math.max(0,Math.min(100,100-Number(b.pct)));const L=Math.round(left);return `<span class="q ${left<=20?'low':left<=50?'mid':''}" title="今日已用 ${b.pct}%，剩 ${Math.round(left*10)/10}%">${L}%<span class="bat"><i style="width:calc((100% - 2px) * ${(left/100).toFixed(3)})"></i></span></span>`};
+// 工作状态：灰=未登录、红=工作中、绿=空闲中
+const ws=a=>!a.loggedIn?{c:'',l:'',t:'未登录'}:a.working?{c:'busy',l:'busy',t:'工作中'}:{c:'ok',l:'on',t:'空闲中'};
 let st={accounts:[],activeId:null,showHome:false},ctxId=null;
 // —— 拖拽排序状态 ——
 // order：编辑模式下的本地顺序（id 数组）；为 null 时按服务端 st.accounts 顺序显示
@@ -111,7 +113,7 @@ function render(){
   viewAccounts().forEach((a,i)=>{
     const [bg,fg]=tint(a.name);const el=document.createElement('button');
     el.className='acc'+(!st.showHome&&a.id===st.activeId?' on':'');
-    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><div class="nm"><b></b>${a.inboxUrl?'<span class="tag" title="来信投到项目">项目</span>':''}</div><div class="st ${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span><span>${a.loggedIn?'已登录':'未登录'}</span>${daily(a)}</div></div>`;
+    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><div class="nm"><b></b>${a.inboxUrl?'<span class="tag" title="来信投到项目">项目</span>':''}</div><div class="st ${ws(a).c}"><span class="lamp ${ws(a).l}"></span><span>${ws(a).t}</span>${daily(a)}</div></div>`;
     el.querySelector('.mono-av').textContent=(a.name||'H').trim()[0].toUpperCase();el.querySelector('b').textContent=a.name;
     el.dataset.id=a.id;
     el.onclick=e=>{if(editMode||Date.now()<suppressClick){e.preventDefault();return;}cockpit.switchTo(a.id);};

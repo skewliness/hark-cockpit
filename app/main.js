@@ -170,7 +170,7 @@ async function refreshStatus() {
     } catch { loginState[a.id] = false; }
   }));
 }
-function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], usage: usage[a.id] || null, kind: 'hark' })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], working: isWorking(a.id), usage: usage[a.id] || null, kind: 'hark' })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
 let pushT;
 function pushState() {
   clearTimeout(pushT);
@@ -275,6 +275,48 @@ app.whenReady().then(() => {
   });
 });
 
+// ===== 工作状态灯 =====
+// 绿=空闲中、红=工作中、灰=未登录。两路信号任一命中即算工作中：
+// 1) 页面里输入框附近出现「停止 / Stop」按钮（主页面和项目收信页都查）；2) 主页面有 hark.com 的流式响应（SSE / ndjson）还没结束。
+// 信号消失后再等 8 秒才判空闲，免得两段输出之间来回闪。
+const WORK_IDLE_MS = 8000, WORK_POLL_MS = 2000, WORK_STREAM_MAX_MS = 10 * 60 * 1000;
+const work = {};   // id -> { busyAt, working, streams: Map<requestId, startedAt> }
+const workOf = id => work[id] || (work[id] = { busyAt: 0, working: false, streams: new Map() });
+function isWorking(id) { return !!loginState[id] && !!work[id]?.working; }
+function workStreamStart(id, rid) { const w = workOf(id); w.streams.set(rid, Date.now()); workPulse(id); }
+function workStreamEnd(id, rid) { const w = work[id]; if (w && w.streams.delete(rid)) w.busyAt = Date.now(); }
+function workPulse(id) { const w = workOf(id); w.busyAt = Date.now(); if (!w.working) { w.working = true; pushState(); } }
+// 用函数延后拼接：PICK_COMPOSER 在文件后面才定义
+const stopJs = () => `(() => { ${PICK_COMPOSER}
+  const shown = b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== 'hidden'; };
+  const root = el ? (el.closest('form') || el.parentElement?.parentElement?.parentElement?.parentElement || document) : document;
+  const label = b => ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.getAttribute('data-testid') || '') + ' ' + (String(b.innerText || '').length <= 16 ? b.innerText : '')).trim();
+  return [...root.querySelectorAll('button,[role="button"]')].some(b => shown(b) && !b.disabled && /(^|[^a-z])(stop|stop generating|stop response|interrupt|cancel response)([^a-z]|$)|停止|中断|取消生成/i.test(label(b))); })()`;
+function workProbe(wc) {
+  if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(false);
+  return Promise.race([wc.executeJavaScript(stopJs(), false).then(v => v === true, () => false), new Promise(r => setTimeout(() => r(false), 1500))]);
+}
+let workTicking = false;
+async function workTick() {
+  if (workTicking) return; workTicking = true;
+  try {
+    let changed = false;
+    const now = Date.now();
+    await Promise.all(accounts.map(async a => {
+      const w = workOf(a.id);
+      if (!loginState[a.id]) { if (w.working) { w.working = false; changed = true; } w.streams.clear(); return; }
+      for (const [rid, t] of w.streams) if (now - t > WORK_STREAM_MAX_MS) w.streams.delete(rid);   // 漏掉结束事件的流，10 分钟后作废
+      const hits = await Promise.all([views.get(a.id), inboxViews.get(a.id)].map(v => workProbe(v?.webContents)));
+      if (hits.some(Boolean) || w.streams.size) w.busyAt = Date.now();
+      const on = !!w.busyAt && Date.now() - w.busyAt < WORK_IDLE_MS;
+      if (on !== w.working) { w.working = on; changed = true; }
+    }));
+    for (const id of Object.keys(work)) if (!accounts.some(a => a.id === id)) delete work[id];
+    if (changed) pushState();
+  } finally { workTicking = false; }
+}
+app.whenReady().then(() => setInterval(() => { workTick().catch(() => {}); }, WORK_POLL_MS));
+
 // ===== 额度检测 =====
 // Hark 没有公开的额度接口。做法：在任一账号里打开“设置 → 账单”时，监听该页面的网络响应，
 // 找到含有额度字段（percent_used / used+limit / resets_at）的 JSON 接口并记住它；
@@ -329,6 +371,9 @@ function watchUsage(acc, wc) {
   wc.debugger.sendCommand('Network.enable').catch(() => {});
   wc.debugger.on('message', async (_e, method, p) => {
     if (method === 'Network.requestWillBeSent') reqs.set(p.requestId, p.request);
+    if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') { reqs.delete(p.requestId); workStreamEnd(acc.id, p.requestId); }
+    if (method === 'Network.eventSourceMessageReceived') workPulse(acc.id);
+    if (method === 'Network.responseReceived' && /hark\.com/.test(p.response.url) && /event-stream|x-ndjson/i.test(p.response.mimeType || '')) workStreamStart(acc.id, p.requestId);
     if (method === 'Network.webSocketCreated' || method === 'Network.eventSourceMessageReceived' || method === 'Network.webSocketFrameReceived') diagWs(method, p);
     if (method !== 'Network.responseReceived') return;
     const r = p.response;
@@ -1110,7 +1155,7 @@ async function pushQuota() {
   const token = await ensureSiteToolToken(series);
   if (token && toolCred.recovery_secret && !toolCred.join_key) ensureJoinKey().catch(() => {});
   if (token) {
-    const windows = accounts.filter(isCollabAccount).map(a => ({ address: siteAddr(a), name: a.name, logged_in: !!loginState[a.id], ...quotaOf(a) }));
+    const windows = accounts.filter(isCollabAccount).map(a => ({ address: siteAddr(a), name: a.name, logged_in: !!loginState[a.id], working: isWorking(a.id), ...quotaOf(a) }));
     const r = await siteReq('/api/quota', { windows }, token);
     if (tokenBad(r) && token === toolCred.token) { toolAuth.lastTry = 0; ensureSiteToolToken(series, true).catch(() => {}); }
     else if (r.s === 403) siteAuthFail(403, token, r.j);

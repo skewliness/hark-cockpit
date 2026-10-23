@@ -22,7 +22,7 @@ h1{margin:0;font:400 34px/1.15 var(--hand);letter-spacing:1px}
 .row .mono-av{width:40px;height:40px;font-size:16px;border-radius:11px}
 .nm b{display:block;font-size:15px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nm small{display:flex;align-items:center;gap:7px;color:var(--dim);font-size:12px}
-.nm small.ok{color:var(--jade)}
+.nm small.ok{color:var(--jade)}.nm small.busy{color:var(--rust)}
 .nm small .cur{color:var(--brass);margin-left:6px}
 .quota{display:grid;gap:7px}
 .q{display:grid;grid-template-columns:1fr auto;gap:3px 8px;font-size:11.5px;color:var(--haze)}
@@ -243,14 +243,15 @@ cockpit.onOpenNotes(openNotes);cockpit.onNotes(n=>{notesSt=n;if(nd.classList.con
 function render(){
   renderTip();renderMail();
   const n=st.accounts.length,ok=st.accounts.filter(a=>a.loggedIn).length;
-  headline.textContent=!n?'还没有账号':ok===n?`${n} 个账号都已登录`:ok?`${n} 个账号，${ok} 个已登录`:`${n} 个账号，都还没登录`;
+  const busy=st.accounts.filter(a=>a.loggedIn&&a.working).length,off=n-ok;
+  headline.textContent=!n?'还没有账号':!ok?`${n} 个账号，都还没登录`:`工作中 ${busy} · 空闲 ${ok-busy}`+(off?` · 未登录 ${off}`:'');
   roster.innerHTML='';
   if(!n){roster.innerHTML='<div class="empty">每个账号都有独立的登录，互不影响。<br><button class="btn pri" id="e1">添加第一个账号</button></div>';e1.onclick=addAcc;return;}
   st.accounts.forEach((a,i)=>{
     const [bg,fg]=tint(a.name),cur=a.id===st.activeId;
     const r=document.createElement('div');r.className='row'+(cur?' cur':'')+(a.loggedIn?'':' off');if(animated)r.style.animation='none';else r.style.animationDelay=(i*45)+'ms';
     r.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div>
-      <div class="nm"><b></b><small class="${a.loggedIn?'ok':''}"><span class="lamp ${a.loggedIn?'on':''}"></span>${a.loggedIn?'已登录':'未登录'}${cur?'<span class="cur">上次使用</span>':''}</small></div>
+      <div class="nm"><b></b><small class="${!a.loggedIn?'':a.working?'busy':'ok'}"><span class="lamp ${!a.loggedIn?'':a.working?'busy':'on'}"></span>${!a.loggedIn?'未登录':a.working?'工作中':'空闲中'}${cur?'<span class="cur">上次使用</span>':''}</small></div>
       <div class="quota">${quota(a)}</div>
       <div class="key">${i<9?'Ctrl '+(i+1):''}</div>
       <div class="acts"><button class="btn open">${a.loggedIn?'打开聊天':'去登录'}</button>

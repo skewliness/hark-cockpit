@@ -28,6 +28,9 @@ button{font:inherit;color:inherit}
 .mono-av{display:grid;place-items:center;border-radius:9px;font-weight:500;flex:none}
 .lamp{width:7px;height:7px;border-radius:50%;background:var(--dim);flex:none}
 .lamp.on{background:var(--jade);box-shadow:0 0 0 3px rgba(108,196,161,.16),0 0 10px rgba(108,196,161,.55)}
+.lamp.busy{background:var(--rust);box-shadow:0 0 0 3px rgba(224,122,100,.18),0 0 10px rgba(224,122,100,.6);animation:lampbeat 1.6s ease-in-out infinite}
+@keyframes lampbeat{50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.lamp.busy{animation:none}}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 14px;border-radius:8px;border:1px solid var(--seam);background:var(--raise);cursor:pointer;white-space:nowrap}
 .btn:hover{background:var(--raise2)}
 .btn.pri{background:var(--brass);border-color:var(--brass);color:var(--brass-ink);font-weight:500}
