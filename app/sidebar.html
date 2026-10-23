@@ -187,7 +187,7 @@ document.addEventListener('pointermove',e=>{
   drag.cy=e.clientY;moveDrag(e.clientY);if(!scrollRAF)scrollRAF=requestAnimationFrame(autoScroll);
 },true);
 const up=e=>{
-  if(lp&&e.pointerId===lp.pid){clearTimeout(lp.t);lp=null;if(stDirty)render();return;}   // 普通点击：交给 onclick 切换账号
+  if(lp&&e.pointerId===lp.pid){clearTimeout(lp.t);lp=null;if(stDirty)setTimeout(()=>{if(stDirty&&!lp&&!drag)render();},0);return;}   // 普通点击：交给 onclick 切换账号
   if(!drag||e.pointerId!==drag.pid)return;
   suppressClick=Date.now()+400;
   if(e.type==='pointercancel'){endDrag(false);return;}
