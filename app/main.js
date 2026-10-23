@@ -300,11 +300,11 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
   const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let t = tw.nextNode(); t; t = tw.nextNode()) {
     const txt = t.nodeValue.trim(); if (!txt || txt.length > 40 || !PILL.test(txt)) continue;
-    const p = t.parentElement; if (!p || !shown(p) || el.contains(p)) continue;
-    if (String(p.innerText || '').trim().length > 40) continue;
-    const r = p.getBoundingClientRect();
+    const p = t.parentElement; if (!p || el.contains(p)) continue;
+    const r = p.getBoundingClientRect();   // 先按位置筛（便宜），长对话里正文的「正在…」大多在这里就被排除
     if (r.bottom > box.top + 4 || r.bottom < box.top - 200) continue;          // 必须紧贴在输入框上方
     if (r.right < box.left || r.left > box.right || r.width > box.width * 0.8) continue;   // 横向落在输入框范围内，且比输入框窄
+    if (!shown(p) || String(p.innerText || '').trim().length > 40) continue;
     if (rounded(p)) return true;
   }
   return false; })()`;
