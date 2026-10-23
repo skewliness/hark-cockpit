@@ -12,6 +12,7 @@ header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px}
 @keyframes bob{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-3px) rotate(-3deg)}}
 h1{margin:0;font:400 34px/1.15 var(--hand);letter-spacing:1px}
 .ver{margin-top:10px;color:var(--dim);font-size:12.5px}
+.mach{margin-top:6px;color:var(--dim);font-size:12.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mach code{font-family:ui-monospace,Consolas,monospace;user-select:all;padding:1px 6px;border-radius:6px;background:rgba(127,127,127,.14);color:inherit}.mach button{font:inherit;font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid rgba(127,127,127,.35);background:transparent;color:inherit;cursor:pointer}.mach .warn{color:#d9822b}
 /* 账号名册：一行一个账号，不是一堆卡片 */
 .roster{margin-top:32px;border:1px solid var(--seam);border-radius:14px;background:var(--ledge);overflow:hidden}
 .row{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(170px,230px) 52px auto;align-items:center;gap:16px;padding:14px 18px;border-top:1px solid var(--seam);animation:rise .32s ease-out both}
@@ -104,7 +105,7 @@ code{font-family:inherit;color:var(--paper);background:var(--ledge);padding:1px 
 </style></head><body>
 <div class="wrap">
   <header>
-    <div><div class="hello" id="hello"><svg class="pic" id="pic" viewBox="0 0 160 100" aria-hidden="true"></svg><div><b id="hiT"></b><span id="hiS"></span></div></div><h1 id="headline">还没有账号</h1><div class="ver" id="ver"></div></div>
+    <div><div class="hello" id="hello"><svg class="pic" id="pic" viewBox="0 0 160 100" aria-hidden="true"></svg><div><b id="hiT"></b><span id="hiS"></span></div></div><h1 id="headline">还没有账号</h1><div class="ver" id="ver"></div><div class="mach" id="mach"></div></div>
     <button class="btn pri" id="addBtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>添加账号</button>
   </header>
   <div id="qtip"></div>
@@ -264,7 +265,16 @@ function render(){
   });
   animated=true;
 }
-cockpit.onState(s=>{st=s;render()});
-cockpit.getState().then(s=>{st=s;render()});
+function renderMachine(){const M=st&&st.mail;if(!M||!M.machine)return;
+  if(!mach.dataset.mid||mach.dataset.mid!==M.machine){mach.dataset.mid=M.machine;mach.innerHTML='<span>本机机器码</span><code></code><button id="mcp" title="复制后发给站长加白名单">复制</button><span class="warn"></span>';mach.querySelector('code').textContent=M.machine;
+    mcp.onclick=()=>cockpit.copyText(M.machine).then(()=>{mcp.textContent='已复制';setTimeout(()=>mcp.textContent='复制',1500)});}
+  let jk=mach.querySelector('.jk');if(!jk){jk=document.createElement('span');jk.className='jk';jk.style.cssText='display:flex;gap:6px;align-items:center';mach.insertBefore(jk,mach.querySelector('.warn'));}
+  const want=M.joinKey?'on':'off';if(jk.dataset.s!==want){jk.dataset.s=want;
+    jk.innerHTML=M.joinKey?'<span>加入码 ••••••</span><button class="jc" title="新窗口注册要用，别发到群里或公开处">复制</button><button class="jr" title="旧码作废，已注册的窗口不受影响">重置</button>':'<span>加入码 未启用</span>';
+    if(M.joinKey){const c=jk.querySelector('.jc'),r=jk.querySelector('.jr');c.onclick=()=>cockpit.joinKeyCopy().then(o=>{c.textContent=o?'已复制':'失败';setTimeout(()=>c.textContent='复制',1500)});
+      r.onclick=()=>{if(confirm('重置加入码？旧码立即作废，已注册的窗口不受影响。'))cockpit.joinKeyReset();};}}
+  mach.querySelector('.warn').textContent=[M.machineTemp?'机器码没能保存，重启后会变，请检查磁盘/权限':'',M.tool==='banned'?'本机已被站点封禁':(M.tool==='error'&&M.toolError?M.toolError:'')].filter(Boolean).join('；');}
+cockpit.onState(s=>{st=s;render();renderMachine()});
+cockpit.getState().then(s=>{st=s;render();renderMachine()});
 cockpit.version().then(v=>ver.textContent='Hark Tools v'+v+'，按 Ctrl 1–9 直接切换账号');
 </script></body></html>
