@@ -291,7 +291,23 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
   const shown = b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== 'hidden'; };
   const root = el ? (el.closest('form') || el.parentElement?.parentElement?.parentElement?.parentElement || document) : document;
   const label = b => ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.getAttribute('data-testid') || '') + ' ' + (String(b.innerText || '').length <= 16 ? b.innerText : '')).trim();
-  return [...root.querySelectorAll('button,[role="button"]')].some(b => shown(b) && !b.disabled && /(^|[^a-z])(stop|stop generating|stop response|interrupt|cancel response)([^a-z]|$)|停止|中断|取消生成/i.test(label(b))); })()`;
+  if ([...root.querySelectorAll('button,[role="button"]')].some(b => shown(b) && !b.disabled && /(^|[^a-z])(stop|stop generating|stop response|interrupt|cancel response)([^a-z]|$)|停止|中断|取消生成/i.test(label(b)))) return true;
+  // Hark 干活时输入框上方会浮出一个圆角小气泡（如「正在查看您的文件。」）：找输入框正上方、窄、圆角、短句的那一个
+  if (!el) return false;
+  const box = (() => { const f = el.closest('form'); const fr = f && f.getBoundingClientRect(); const er = el.getBoundingClientRect(); return fr && fr.height < 320 ? fr : er; })();
+  const PILL = /^(正在|稍等|思考中|处理中)|^(thinking|working|searching|reading|looking|checking|running|writing|browsing|analy[sz]ing|planning)\b/i;
+  const rounded = n => { for (let i = 0; n && i < 4; i++, n = n.parentElement) { const cs = getComputedStyle(n); if (parseFloat(cs.borderTopLeftRadius) >= 10 && (parseFloat(cs.borderTopWidth) > 0 || !/rgba\(0, 0, 0, 0\)|transparent/.test(cs.backgroundColor))) return true; } return false; };
+  const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let t = tw.nextNode(); t; t = tw.nextNode()) {
+    const txt = t.nodeValue.trim(); if (!txt || txt.length > 40 || !PILL.test(txt)) continue;
+    const p = t.parentElement; if (!p || !shown(p) || el.contains(p)) continue;
+    if (String(p.innerText || '').trim().length > 40) continue;
+    const r = p.getBoundingClientRect();
+    if (r.bottom > box.top + 4 || r.bottom < box.top - 200) continue;          // 必须紧贴在输入框上方
+    if (r.right < box.left || r.left > box.right || r.width > box.width * 0.8) continue;   // 横向落在输入框范围内，且比输入框窄
+    if (rounded(p)) return true;
+  }
+  return false; })()`;
 function workProbe(wc) {
   if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(false);
   return Promise.race([wc.executeJavaScript(stopJs(), false).then(v => v === true, () => false), new Promise(r => setTimeout(() => r(false), 1500))]);
