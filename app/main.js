@@ -501,7 +501,9 @@ function watchUsage(acc, wc) {
 
 // 额度诊断：只记录 hark.com 接口的地址和字段名（不含任何内容、cookie 或令牌），用来找出额度数据从哪来
 const diag = [];
-function diagAdd(x) { if (/\.(js|css|png|jpg|svg|woff2?|webp|ico)$/i.test(x.url)) return; diag.push(x); if (diag.length > 600) diag.shift(); }
+// 诊断 entries 脱敏：url 只留协议 + 主机 + lampPath 固定词表路径（账户 ID、会话 ID、令牌段 → :x / :id / :n）；文本流只留长度
+const diagUrl = u => { try { const x = new URL(u); return x.protocol + '//' + x.host + lampPath(u); } catch { return ''; } };
+function diagAdd(x) { if (/\.(js|css|png|jpg|svg|woff2?|webp|ico)$/i.test(String(x.url || '').split('?')[0])) return; if (x.url !== undefined) x.url = diagUrl(x.url); diag.push(x); if (diag.length > 600) diag.shift(); }
 function shape(o, d = 0) {
   if (Array.isArray(o)) return o.length ? [shape(o[0], d + 1)] : [];
   if (o && typeof o === 'object') { if (d > 3) return '{…}'; const r = {}; for (const k of Object.keys(o).slice(0, 40)) r[k] = shape(o[k], d + 1); return r; }
@@ -511,11 +513,11 @@ function diagWs(method, p) {
   if (method === 'Network.webSocketCreated') return diagAdd({ t: Date.now(), ws: true, url: String(p.url).split('?')[0] });
   const data = method === 'Network.eventSourceMessageReceived' ? p.data : p.response && p.response.payloadData;
   if (!data || data.length > 100000 || !/percent|quota|limit|usage|credit|resets/i.test(data)) return;
-  try { diagAdd({ t: Date.now(), stream: method.includes('eventSource') ? 'sse' : 'ws', keys: shape(JSON.parse(data)) }); } catch { diagAdd({ t: Date.now(), stream: 'text', hint: data.replace(/[A-Za-z0-9+/=_-]{24,}/g, '…').slice(0, 300) }); }
+  try { diagAdd({ t: Date.now(), stream: method.includes('eventSource') ? 'sse' : 'ws', keys: shape(JSON.parse(data)) }); } catch { diagAdd({ t: Date.now(), stream: 'text', len: String(data).length }); }
 }
 ipcMain.handle('exportDiag', async () => {
   let f = path.join(app.getPath('desktop'), 'hark-cockpit-diag.json');
-  const data = JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: usageCfg.url.split('?')[0] } : null, entries: diag, lamp: lampLog }, null, 2);
+  const data = JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: diagUrl(usageCfg.url) } : null, entries: diag, lamp: lampLog }, null, 2);
   try { fs.writeFileSync(f, data); } catch { f = path.join(app.getPath('userData'), 'hark-cockpit-diag.json'); fs.writeFileSync(f, data); }
   shell.showItemInFolder(f);
   toast(`诊断文件已保存（${diag.length} 条记录，状态灯 ${lampLog.length} 条），已打开所在文件夹`);
