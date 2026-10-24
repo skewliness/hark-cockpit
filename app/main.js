@@ -347,7 +347,8 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
 // 诊断：输入框附近每种「正在…」候选结构记一次（按判定 + 祖先链签名去重，最多 40 条），用户在侧栏导出诊断即可拿到真实 DOM 结构
 const lampSeen = new Set();
 const lampLog = [];   // 状态灯诊断单独存，最多 300 条，不被额度诊断挤掉
-function lampAdd(x) { lampLog.push(x); if (lampLog.length > 300) lampLog.shift(); }   // 满 300 丢最旧
+const LAMP_QUOTA = { dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
+function lampAdd(x) { lampLog.push(x); const k = x.lamp, q = LAMP_QUOTA[k] || 40; let n = 0; for (const y of lampLog) if (y.lamp === k) n++; if (n > q) lampLog.splice(lampLog.findIndex(y => y.lamp === k), 1); }   // 按类别配额，各类满了丢本类最旧，保留新到样本
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
     if (lampSeen.has(sig) || lampSeen.size >= 40) continue; lampSeen.add(sig); lampAdd({ t: Date.now(), lamp: 'dom', verdict: x.verdict, prefix: x.prefix, chain: x.chain }); }
@@ -425,8 +426,9 @@ function parseUsage(obj) {
 }
 // 状态灯流样本（只记事件名、类型字段和字段名，不记正文），最多 200 条
 const lampStreams = new Map(); let lampStreamN = 0, lampStreamCount = 0;
-function lampStreamDiag(x) { if (lampStreamCount++ < 200) lampAdd(x); }
-const lampPath = u => { try { return new URL(u).pathname.split('/').map(x => !x ? x : /^[a-z][a-z0-9._-]{0,30}$/i.test(x) && !/\d{4,}/.test(x) && !/^[0-9a-f_-]{8,}$/i.test(x) ? x : ':x').join('/'); } catch { return ''; } };
+function lampStreamDiag(x) { lampStreamCount++; lampAdd(x); }
+// 路径白名单：只留全小写单词段（及 v1、_mp、trpc 方法名）；纯数字 → :n，UUID → :id；含数字字母混合、@、%XX、点号的一律 :x
+const lampPath = u => { try { const seg = new URL(u).pathname.split('/'); return seg.map((x, i) => !x ? x : /^\d+$/.test(x) ? ':n' : /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x) ? ':id' : /^[0-9a-f]{8,}$/i.test(x) ? ':x' : /^(?:[a-z][a-z_-]{0,23}|v\d{1,2}|_[a-z]{1,10})$/.test(x) ? x : seg[i - 1] === 'trpc' && /^[A-Za-z]{1,30}\.[A-Za-z]{1,30}$/.test(x) ? x : ':x').join('/'); } catch { return ''; } };
 const lampReq = new Map();   // hark.com 的 Fetch/XHR：记开始时间，结束时若持续 >2 秒（疑似流式回复通道）记一条
 const lampWs = new Set(); let lampWsFrames = 0;
 function evShape(data) { const ID_RE = /^[A-Za-z0-9_.:\/-]{1,40}$/; const len = String(data || '').length; try { const o = JSON.parse(data); const kind = o && typeof o === 'object' ? ['type', 'event', 'kind', 't', 'op'].map(k => typeof o[k] === 'string' ? k + '=' + (ID_RE.test(o[k]) ? o[k] : '#') : '').filter(Boolean).join(' ') : ''; return { len, kind, keys: o && typeof o === 'object' ? Object.keys(o).slice(0, 15).map(k => ID_RE.test(k) && k.length <= 30 ? k : '#') : typeof o }; } catch { return { len, kind: 'non-json' }; } }
@@ -443,7 +445,7 @@ function watchUsage(acc, wc) {
     if (method === 'Network.responseReceived' && isHarkHost(p.response.url) && /^(Fetch|XHR)$/.test(p.type)) lampReq.set(p.requestId, { at: Date.now(), path: lampPath(p.response.url), mime: p.response.mimeType, method: (reqs.get(p.requestId) || {}).method });
     if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && lampReq.has(p.requestId)) { const q = lampReq.get(p.requestId); lampReq.delete(p.requestId); const ms = Date.now() - q.at; if (ms > 2000) lampStreamDiag({ t: Date.now(), lamp: 'long-req', ms, bytes: p.encodedDataLength, ...q }); }
     if (method === 'Network.webSocketCreated' && isHarkHost(p.url)) { lampWs.add(p.requestId); lampStreamDiag({ t: Date.now(), lamp: 'ws', path: lampPath(p.url) }); }
-    if (method === 'Network.webSocketFrameReceived' && lampWs.has(p.requestId) && lampWsFrames++ < 120) lampStreamDiag({ t: Date.now(), lamp: 'ws-frame', ...evShape(p.response && p.response.payloadData) });
+    if (method === 'Network.webSocketFrameReceived' && lampWs.has(p.requestId)) lampStreamDiag({ t: Date.now(), lamp: 'ws-frame', ...evShape(p.response && p.response.payloadData) });
     if (method === 'Network.webSocketCreated' || method === 'Network.eventSourceMessageReceived' || method === 'Network.webSocketFrameReceived') diagWs(method, p);
     if (method !== 'Network.responseReceived') return;
     const r = p.response;

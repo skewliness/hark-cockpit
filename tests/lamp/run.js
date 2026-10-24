@@ -20,10 +20,20 @@ ok('evShape non-json', evShape('ping').kind, 'non-json');
 ok('R4 evShape drops non-id values', JSON.stringify(evShape('{"type":"我的文件 报告.pdf","event":"a b","op":"delta","你好":1,"text":"secret"}')).match(/我的|报告|你好|secret|a b/g), null);
 ok('R4 evShape keeps id values', evShape('{"type":"message.delta"}').kind, 'type=message.delta');
 const lampPath = fn('lampPath');
-for (const [u, w] of [['https://app.hark.com/api/messages/send?text=hello%20secret&u=me@x.com', '/api/messages/send'], ['https://app.hark.com/api/presence/sessions/e49660a8-2955-49ae-bf10-88a902b0ebb5', '/api/presence/sessions/:x'], ['https://app.hark.com/api/c/abcdefab/stream', '/api/c/:x/stream'], ['https://app.hark.com/api/u/1234567/x', '/api/u/:x/x'], ['https://app.hark.com/api/f/%E6%88%91%E7%9A%84.pdf', '/api/f/:x']]) ok('R4 lampPath ' + u.slice(20, 70), lampPath(u), w);
-// R5 lamp 缓冲：满 300 丢最旧，不碰 diag 主缓冲
-{ const lampLog = [], diag = [{ k: 'main' }]; const lampAdd = eval('(' + src.match(/function lampAdd\(x\) \{[^\n]*?\}(?=   )/)[0].replace('function lampAdd', 'function') + ')');
-  for (let n = 0; n < 310; n++) lampAdd({ n }); ok('R5 lamp cap 300', lampLog.length, 300); ok('R5 oldest dropped', lampLog[0].n, 10); ok('R5 newest kept', lampLog[299].n, 309); ok('R5 diag untouched', diag.length, 1); }
+for (const [u, w] of [['https://app.hark.com/api/messages/send?text=hello%20secret&u=me@x.com', '/api/messages/send'], ['https://app.hark.com/api/presence/sessions/e49660a8-2955-49ae-bf10-88a902b0ebb5', '/api/presence/sessions/:id'], ['https://app.hark.com/api/c/abcdefab/stream', '/api/c/:x/stream'], ['https://app.hark.com/api/u/1234567/x', '/api/u/:n/x'], ['https://app.hark.com/api/f/%E6%88%91%E7%9A%84.pdf', '/api/f/:x'],
+  ['https://hark.com/api/users/alice.chen@example.com/threads', '/api/users/:x/threads'], ['https://hark.com/api/chat/k3J9xPqZ7mWv/messages', '/api/chat/:x/messages'], ['https://hark.com/api/search/%E8%88%AA%E7%8F%AD%20%E9%A6%99%E6%B8%AF', '/api/search/:x'], ['https://hark.com/api/t/550e8400-e29b-41d4-a716-446655440000/m/12345678', '/api/t/:id/m/:n'],
+  ['https://app.hark.com/trpc/personalization.getPreferences', '/trpc/personalization.getPreferences'], ['https://app.hark.com/api/otlp/v1/traces', '/api/otlp/v1/traces'], ['https://app.hark.com/_mp/track/', '/_mp/track/'], ['https://app.hark.com/api/x/foo.bar', '/api/x/:x']]) ok('R4 lampPath ' + u.slice(u.indexOf('/', 9), 70), lampPath(u), w);
+{ const outs = ['https://hark.com/api/users/alice.chen@example.com/threads', 'https://hark.com/api/chat/k3J9xPqZ7mWv/messages', 'https://hark.com/api/search/%E8%88%AA%E7%8F%AD%20%E9%A6%99%E6%B8%AF', 'https://hark.com/api/t/550e8400-e29b-41d4-a716-446655440000/m/12345678'].map(lampPath).join(' ');
+  ok('R4 lampPath @ / %XX / mixed alnum>=8 hits', (outs.match(/@|%[0-9A-F]{2}|(?=[^/]*\d)(?=[^/]*[a-z])[a-z0-9]{8,}/gi) || []).length, 0); }
+// R5 lamp 缓冲：分类配额，心跳刷满后新到的生成通道样本仍记得下，不碰 diag 主缓冲
+{ const code = src.match(/const lampLog = \[\];[^\n]*\n/)[0] + src.match(/const LAMP_QUOTA = [^\n]*\n/)[0] + src.match(/function lampAdd\(x\)[^\n]*\n/)[0] + 'let lampStreamCount = 0;' + src.match(/function lampStreamDiag\(x\)[^\n]*\n/)[0];
+  const diag = [{ k: 'main' }]; const f = new Function(code + 'return { lampLog, lampAdd, lampStreamDiag };')();
+  for (let n = 0; n < 200; n++) f.lampStreamDiag({ lamp: 'sse', ev: 'ping', n }); for (let n = 0; n < 120; n++) f.lampAdd({ lamp: 'dom', n });
+  f.lampStreamDiag({ lamp: 'long-req', path: '/api/chat/stream', ms: 45000 });
+  ok('R5 long-req recorded after saturation', f.lampLog.some(x => x.lamp === 'long-req'), true);
+  ok('R5 sse kept newest 100', f.lampLog.filter(x => x.lamp === 'sse').map(x => x.n).join(), Array.from({ length: 100 }, (_, n) => n + 100).join());
+  ok('R5 dom kept newest 60', f.lampLog.filter(x => x.lamp === 'dom')[0].n, 60);
+  ok('R5 total bounded', f.lampLog.length <= 480, true); ok('R5 diag untouched', diag.length, 1); }
 // 1b) 网络流不点灯（P1-1/2/3）：busyAt 只在 workTick 里由页面探针写入，watchUsage 里没有任何写 busyAt / working 的路径
 ok('busyAt writers == 1 (workTick only)', (src.match(/busyAt = /g) || []).length, 1);
 const wu = src.slice(src.indexOf('function watchUsage'), src.indexOf("wc.on('destroyed'", src.indexOf('function watchUsage')));
