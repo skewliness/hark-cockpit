@@ -304,9 +304,17 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
     const r = b.getBoundingClientRect(); const cx = r.left + r.width / 2;
     if (cx >= box.left + box.width * 0.5 && cx <= box.right + 8 && r.top >= box.top - 8 && r.bottom <= box.bottom + 8) return { busy: true, rule: 'stop-button', seen: [] };
   }
+  // 真机（2026-10-24 第二份诊断）：Hark 运行中会渲染 data-testid="live-run-pill"（内含 run-narration，data-phase 如 thinking），文字不一定以「正在」开头。
+  // 它可见、且横向落在输入框列内、位于输入框上方 400px 内即判工作中，不看文字（解 P1-2：无「正在…」气泡的工作态）
+  for (const lp of document.querySelectorAll('[data-testid="live-run-pill"],[data-testid="run-narration"]')) {
+    if (lp.contains(el) || lp.closest('[data-testid="message-bubble"],[data-testid="message-text"]') || !shown(lp)) continue;
+    const r = lp.getBoundingClientRect();
+    if (r.right < box.left || r.left > box.right || r.bottom > box.top + 4 || r.bottom < box.top - 400) continue;
+    return { busy: true, rule: 'live-run-pill', seen: [] };
+  }
   // 状态气泡：输入框正上方、窄、圆角、短句（如「正在查看您的文件。」），且不在消息列表里
   const PILL = /^(正在|稍等|思考中|处理中)|^(thinking|working|searching|reading|looking|checking|running|writing|browsing|analy[sz]ing|planning)\\b/i;
-  const MSG = '[role="log"],[role="feed"],[role="article"],article,[data-message-id],[data-message-author-role]';
+  const MSG = '[role="log"],[role="feed"],[role="article"],article,[data-message-id],[data-message-author-role],[data-testid="message-bubble"],[data-testid="message-text"]';   // 后两个来自真机诊断
   const scrollBox = a => { const oy = getComputedStyle(a).overflowY; return (oy === 'auto' || oy === 'scroll') && a.scrollHeight > a.clientHeight + 1; };
   // 消息列表项：自身或某个祖先（到包含输入框的那层为止）有同标签同 class 的兄弟——聊天记录是重复的行，状态气泡是单独一个
   const cls = a => String(a.className && a.className.baseVal !== undefined ? a.className.baseVal : a.className || '').trim();
@@ -332,7 +340,7 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
     if (!shown(p) || String(p.innerText || '').trim().length > 40) continue;
     // 真实 Hark（2026-10-24 真机诊断）：状态气泡的第 5 层祖先带 data-testid + data-phase，且位于消息滚动区内。带 data-phase 的直接认定
     // 且 p 与该祖先之间须有一层 absolute + 圆角≥10 的外壳（真机 sx9adt4），普通消息节点即使带 data-phase 也不认
-    let ph = null, shell = false; for (let a = p, i = 0; a && i < 6 && !ph; a = a.parentElement, i++) { if (a.hasAttribute('data-phase') && !a.contains(el)) { ph = shell ? a : null; break; } const cs = getComputedStyle(a); if (cs.position === 'absolute' && parseFloat(cs.borderTopLeftRadius) >= 10) shell = true; }
+    let ph = null, shell = false; for (let a = p, i = 0; a && i < 6 && !ph; a = a.parentElement, i++) { if (a.hasAttribute('data-phase') && !a.contains(el)) { ph = shell && !p.closest('[data-testid="message-bubble"],[data-testid="message-text"]') ? a : null; break; } const cs = getComputedStyle(a); if (cs.position === 'absolute' && parseFloat(cs.borderTopLeftRadius) >= 10) shell = true; }
     // 1.3.31 起只认真机结构（data-phase + absolute 圆角外壳）；只有圆角底色的记 weak-pill 进诊断，不点灯（解 P1-1 短对话误判）
     const skip = ph ? '' : inMessages(p) || (rounded(p) ? 'weak-pill' : 'not-rounded');   // 真机签名优先：气泡本就在消息滚动区里（真机诊断）
     if (seen.length < 3) seen.push({ verdict: skip || 'pill', prefix: skip ? undefined : txt.match(PILL)[0], chain: chain(p) });   // 不记正文：只有判为气泡的才留下命中的固定前缀（如「正在」）
