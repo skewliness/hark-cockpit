@@ -356,7 +356,7 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
 const lampSeen = new Set();
 const lampLog = [];   // 状态灯诊断单独存，最多 300 条，不被额度诊断挤掉
 const lampProbeLast = new Map();
-const LAMP_QUOTA = { probe: 300, light: 200, reply: 300, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
+const LAMP_QUOTA = { tick: 100, probe: 300, light: 200, reply: 300, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
 function lampAdd(x) { lampLog.push(x); const k = x.lamp, q = LAMP_QUOTA[k] || 40; let n = 0; for (const y of lampLog) if (y.lamp === k) n++; if (n > q) lampLog.splice(lampLog.findIndex(y => y.lamp === k), 1); }   // 按类别配额，各类满了丢本类最旧，保留新到样本
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
@@ -381,10 +381,13 @@ function replyDiag(key, ai, view, v, now) {
   if (r.sig !== sig) { r.sig = sig; r.at = now; if (r.state !== 'growing') { r.state = 'growing'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'growing', n: v.n }); } return; }
   if (r.state === 'growing' && now - r.at >= REPLY_STABLE_MS) { r.state = 'stable'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'stable', at: r.at, n: v.n }); }
 }
+const tickStat = { last: 0, n: 0, skipped: 0, maxGapMs: 0, maxProbeMs: 0 };
 const replyPending = new Set();   // 回复诊断探针在飞的视图，避免慢页面上堆积
 let workTicking = false;
 async function workTick() {
-  if (workTicking) return; workTicking = true;
+  const ts0 = Date.now(); if (workTicking) { tickStat.skipped++; return; } workTicking = true;
+  // 轮询节奏诊断：相邻两次 tick 开始的间隔（含被防重入跳过的轮次），最大值随诊断导出；间隔 >1500ms 另记一条
+  if (tickStat.last) { const gap = ts0 - tickStat.last; tickStat.n++; if (gap > tickStat.maxGapMs) tickStat.maxGapMs = gap; if (gap > 1500) lampAdd({ t: ts0, lamp: 'tick', gap }); } tickStat.last = ts0;
   try {
     let changed = false; const lights = [];
     await Promise.all(accounts.map(async a => {
@@ -395,7 +398,7 @@ async function workTick() {
       vs.forEach((v, k) => { const key = a.id + ':' + k; if (replyPending.has(key)) return; replyPending.add(key);
         replyProbe(v?.webContents).then(r => replyDiag(key, ai, k ? 'inbox' : 'main', r, Date.now()), () => {}).finally(() => replyPending.delete(key)); });
       const ts = Date.now(), hits = await Promise.all(vs.map(v => workProbe(v?.webContents)));
-      const tp = Date.now();
+      const tp = Date.now(); if (tp - ts > tickStat.maxProbeMs) tickStat.maxProbeMs = tp - ts;
       // 运行周期诊断：每个窗口的主视图 / 收信视图，探针结果（命中规则或空闲）变化时记一条；灯亮灭变化时记一条。只记序号、规则名、时间，不含正文
       hits.forEach((h, k) => { const key = a.id + ':' + k, val = h || ''; if (lampProbeLast.get(key) !== val) { lampProbeLast.set(key, val); lampAdd({ t: tp, lamp: 'probe', acc: ai, view: k ? 'inbox' : 'main', busy: !!h, rule: h || undefined, ms: tp - ts }); } });
       if (hits.some(Boolean)) w.busyAt = tp;
@@ -517,7 +520,7 @@ function diagWs(method, p) {
 }
 ipcMain.handle('exportDiag', async () => {
   let f = path.join(app.getPath('desktop'), 'hark-cockpit-diag.json');
-  const data = JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: diagUrl(usageCfg.url) } : null, entries: diag, lamp: lampLog }, null, 2);
+  const data = JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: diagUrl(usageCfg.url) } : null, entries: diag, lamp: lampLog, tick: { pollMs: WORK_POLL_MS, n: tickStat.n, skipped: tickStat.skipped, maxGapMs: tickStat.maxGapMs, maxProbeMs: tickStat.maxProbeMs } }, null, 2);
   try { fs.writeFileSync(f, data); } catch { f = path.join(app.getPath('userData'), 'hark-cockpit-diag.json'); fs.writeFileSync(f, data); }
   shell.showItemInFolder(f);
   toast(`诊断文件已保存（${diag.length} 条记录，状态灯 ${lampLog.length} 条），已打开所在文件夹`);

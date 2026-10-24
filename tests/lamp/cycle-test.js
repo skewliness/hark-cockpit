@@ -19,6 +19,10 @@ const cases={
 'K12 独立结束100 pill101 灯109 PASS':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),Rs(105,100),P(101,false),Lt(109,false),P(300,false,undefined,'inbox')],
 'K13 回复在探针转闲后35s才出现 FAIL':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),P(100,false),Lt(108,false),Rg(135),Rs(141,135),P(300,false,undefined,'inbox')],
 'K14 下次运行前用户新消息不算本周期结束 PASS':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),Rs(105,100),P(100,false),Lt(106,false),Rg(230),Rs(236,230),P(238,true,'live-run-pill'),Lt(238,true),Rg(240),Rs(250,245),P(245,false),Lt(251,false),P(400,false,undefined,'inbox')],
+'T1 转闲后15s用户再发消息 不算本周期结束 PASS':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),P(130,false),Rs(136,130),Lt(136,false),Rg(145),Rs(151,145),P(299,false,undefined,'inbox')],
+'T1b 用户消息后开下一轮 PASS':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),P(130,false),Rs(136,130),Lt(136,false),Rg(145),Rs(151,145),P(160,true,'live-run-pill'),Lt(160,true),Rg(162),P(200,false),Rs(206,200),Lt(206,false),P(299,false,undefined,'inbox')],
+'T2 对照无消息 PASS':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),P(130,false),Rs(136,130),Lt(136,false),P(299,false,undefined,'inbox')],
+'K15 复红后才出现回复增长 不得当作用户触发 FAIL':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),P(100,false),Rs(105,100),Lt(106,false),P(120,true,'live-run-pill'),Lt(120,true),Rg(125),P(140,false),Rs(146,140),Lt(147,false),P(300,false,undefined,'inbox')],
 };
 for(const [k,lamp] of Object.entries(cases)){fs.writeFileSync(tmp,JSON.stringify({lamp}));let o,rc=0;try{o=cp.execFileSync(process.execPath,[path.join(__dirname,'cycle.js'),tmp]).toString()}catch(e){o=e.stdout.toString();rc=e.status}const want=/ PASS$/.test(k)?0:1,good=rc===want;if(!good)bad++;console.log((good?'PASS ':'FAIL ')+k,'=>',o.trim().split('\n').pop(),'rc='+rc);}
 console.log(bad?bad+' failed':'all passed');process.exit(bad?1:0);

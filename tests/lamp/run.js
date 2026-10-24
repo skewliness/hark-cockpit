@@ -44,7 +44,7 @@ ok('watchUsage never touches work state', /busyAt|\.working\b|workOf\(|workPulse
 (async () => {
   const { chromium } = require('playwright-core');
   let exe = process.env.CHROME;
-  if (!exe) { const base = path.join(require('os').homedir(), '.cache/ms-playwright'); const d = fs.readdirSync(base).find(x => /^chromium-\d/.test(x)); const sub = fs.readdirSync(path.join(base, d)).find(x => x.startsWith('chrome-')); exe = path.join(base, d, sub, process.platform === 'win32' ? 'chrome.exe' : 'chrome'); }
+  if (!exe) { const base = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(require('os').homedir(), '.cache/ms-playwright'); const d = fs.readdirSync(base).find(x => /^chromium-\d/.test(x)) || fs.readdirSync(base).find(x => /^chromium_headless_shell-\d/.test(x)); const sub = fs.readdirSync(path.join(base, d)).find(x => x.startsWith('chrome-')); exe = ['chrome.exe', 'chrome', 'headless_shell', 'chrome-headless-shell.exe', 'chrome-headless-shell'].map(n => path.join(base, d, sub, n)).find(f => fs.existsSync(f)); }
   const b = await chromium.launch({ executablePath: exe }); const page = await b.newPage({ viewport: { width: 1280, height: 720 } });
   const dir = path.join(__dirname, 'fixtures');
   for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.html')).sort()) {
