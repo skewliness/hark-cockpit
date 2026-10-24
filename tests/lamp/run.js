@@ -57,7 +57,7 @@ ok('watchUsage never touches work state', /busyAt|\.working\b|workOf\(|workPulse
     const attrs = await page.evaluate(() => [...document.querySelectorAll('[data-testid],[data-phase]')].flatMap(e => [e.getAttribute('data-testid'), e.getAttribute('data-phase')]).filter(t => t && t.length > 1 && !/^[A-Za-z0-9_.:-]+$/.test(t)));
     ok(f + ' R4 no-attr-text-in-diag', attrs.some(t => json.includes(t)), false);
     // 独立回复完成标志 replyJs：只回 {n, len} 两个整数，不含任何页面文字
-    const rv = await page.evaluate(replyJs); ok(f + ' reply-diag only n/len ints', Object.keys(rv).sort().join(',') === 'len,n' && Number.isInteger(rv.n) && Number.isInteger(rv.len), true);
+    const rv = await page.evaluate(replyJs); ok(f + ' reply-diag only n/len ints + u bool', Object.keys(rv).every(k => ['len', 'n', 'u'].includes(k)) && Number.isInteger(rv.n) && Number.isInteger(rv.len) && (rv.u === undefined || typeof rv.u === 'boolean'), true);
     const want = /-true(\.xfail)?\.html$/.test(f), name = f + (v.rule ? ' [' + v.rule + ']' : '') + (v.seen.length ? ' {' + v.seen.map(x => x.verdict).join(',') + '}' : '');
     if (/\.xfail\.html$/.test(f)) { v.busy === want ? (xpass++, console.log('XPASS ' + name)) : (xfail++, console.log('XFAIL ' + name + ' -> ' + v.busy + '（已知：合成 DOM 下与对立用例不可区分，待真实 Hark DOM）')); }
     else ok(name, v.busy, want);
