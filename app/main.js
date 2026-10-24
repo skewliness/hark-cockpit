@@ -394,10 +394,10 @@ async function workTick() {
       // 回复完成诊断：不 await、不参与点灯，结果回来时按回来的时刻记录，绝不拖慢灯
       vs.forEach((v, k) => { const key = a.id + ':' + k; if (replyPending.has(key)) return; replyPending.add(key);
         replyProbe(v?.webContents).then(r => replyDiag(key, ai, k ? 'inbox' : 'main', r, Date.now()), () => {}).finally(() => replyPending.delete(key)); });
-      const hits = await Promise.all(vs.map(v => workProbe(v?.webContents)));
+      const ts = Date.now(), hits = await Promise.all(vs.map(v => workProbe(v?.webContents)));
       const tp = Date.now();
       // 运行周期诊断：每个窗口的主视图 / 收信视图，探针结果（命中规则或空闲）变化时记一条；灯亮灭变化时记一条。只记序号、规则名、时间，不含正文
-      hits.forEach((h, k) => { const key = a.id + ':' + k, val = h || ''; if (lampProbeLast.get(key) !== val) { lampProbeLast.set(key, val); lampAdd({ t: tp, lamp: 'probe', acc: ai, view: k ? 'inbox' : 'main', busy: !!h, rule: h || undefined }); } });
+      hits.forEach((h, k) => { const key = a.id + ':' + k, val = h || ''; if (lampProbeLast.get(key) !== val) { lampProbeLast.set(key, val); lampAdd({ t: tp, lamp: 'probe', acc: ai, view: k ? 'inbox' : 'main', busy: !!h, rule: h || undefined, ms: tp - ts }); } });
       if (hits.some(Boolean)) w.busyAt = tp;
       const on = !!w.busyAt && tp - w.busyAt < WORK_IDLE_MS;
       if (on !== w.working) { w.working = on; changed = true; lights.push({ acc: ai, on }); }

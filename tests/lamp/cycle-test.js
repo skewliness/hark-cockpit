@@ -14,6 +14,11 @@ const cases={
 'K7 开头即忙 FAIL':[P(0,true,'live-run-pill'),R0,Lt(0,true),Rg(5),Rs(35,30),P(30,false),Lt(38,false),P(200,false,undefined,'inbox')],
 'K8 无独立结束标志 FAIL':[P(0,false),P(70,true,'live-run-pill'),Lt(70,true),P(100,false),Lt(108,false),P(200,false,undefined,'inbox')],
 'K9 两周期都好 PASS':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),Rs(105,100),P(100,false),Lt(108,false),P(200,true,'live-run-pill'),Lt(200,true),Rg(202),Rs(235,230),P(230,false),Lt(238,false),P(400,false,undefined,'inbox')],
+'K10 灯提前灭 pill80 灯88 回复增长到120 FAIL':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),P(80,false),Lt(88,false),Rs(125,120),P(300,false,undefined,'inbox')],
+'K11 独立结束100 pill109 灯117 FAIL':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),Rs(105,100),P(109,false),Lt(117,false),P(300,false,undefined,'inbox')],
+'K12 独立结束100 pill101 灯109 PASS':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),Rs(105,100),P(101,false),Lt(109,false),P(300,false,undefined,'inbox')],
+'K13 回复在探针转闲后35s才出现 FAIL':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),P(100,false),Lt(108,false),Rg(135),Rs(141,135),P(300,false,undefined,'inbox')],
+'K14 下次运行前用户新消息不算本周期结束 PASS':[P(0,false),R0,P(70,true,'live-run-pill'),Lt(70,true),Rg(72),Rs(105,100),P(100,false),Lt(106,false),Rg(230),Rs(236,230),P(238,true,'live-run-pill'),Lt(238,true),Rg(240),Rs(250,245),P(245,false),Lt(251,false),P(400,false,undefined,'inbox')],
 };
 for(const [k,lamp] of Object.entries(cases)){fs.writeFileSync(tmp,JSON.stringify({lamp}));let o,rc=0;try{o=cp.execFileSync(process.execPath,[path.join(__dirname,'cycle.js'),tmp]).toString()}catch(e){o=e.stdout.toString();rc=e.status}const want=/ PASS$/.test(k)?0:1,good=rc===want;if(!good)bad++;console.log((good?'PASS ':'FAIL ')+k,'=>',o.trim().split('\n').pop(),'rc='+rc);}
 console.log(bad?bad+' failed':'all passed');process.exit(bad?1:0);
