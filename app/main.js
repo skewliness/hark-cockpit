@@ -280,7 +280,7 @@ app.whenReady().then(() => {
 // 信号消失后再等 8 秒才判空闲，免得两段输出之间来回闪。
 // 网络流（SSE / ndjson）暂不点灯：常驻通知流、心跳、断线重连都会误报，且 Hark 的事件格式未知。先只把 hark.com 流的事件类型
 // 记进诊断（不含正文），拿到真实样本后再按白名单接回来。
-const WORK_IDLE_MS = 8000, WORK_POLL_MS = 2000;
+const WORK_IDLE_MS = 8000, WORK_POLL_MS = 1000;   // 每秒查一次，开工后 ≤ 1s + 探针耗时 变红（用户 2026-10-24 选定）
 const work = {};   // id -> { busyAt, working }
 const workOf = id => work[id] || (work[id] = { busyAt: 0, working: false });
 function isWorking(id) { return !!loginState[id] && !!work[id]?.working; }
