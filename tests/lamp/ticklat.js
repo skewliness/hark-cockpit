@@ -18,7 +18,7 @@ async function run(delay) {
   await ctx.workTick();   // 在飞时不重复发起
   await new Promise(r => setTimeout(r, Math.min(delay, 1500) + 100));
   const rec = ctx.L.filter(x => x.lamp === 'reply');
-  ok(`replyJs 延迟 ${delay}ms：reply 记录${delay < 1500 ? '照常产生' : '超时不产生'}且只含结构字段`, (delay < 1500 ? rec.length === 1 : rec.length === 0) && rec.every(x => Object.keys(JSON.parse(JSON.stringify(x))).filter(k => k !== 'u').sort().join(',') === 'acc,at,lamp,n,state,t,view' && (x.u === undefined || typeof x.u === 'boolean')));
+  ok(`replyJs 延迟 ${delay}ms：reply 记录${delay < 1500 ? '照常产生' : '超时不产生'}且只含结构字段`, (delay < 1500 ? rec.length === 1 : rec.length === 0) && rec.every(x => Object.keys(JSON.parse(JSON.stringify(x))).filter(k => !['u', 'us', 'bk'].includes(k)).sort().join(',') === 'acc,at,lamp,n,state,t,view' && (x.u === undefined || typeof x.u === 'boolean') && ['us', 'bk'].every(k => x[k] === undefined || Number.isInteger(x[k]))));
 }
 async function skip() {   // 防重入跳过的轮次计入 skipped，间隔计入 maxGapMs
   const wc = { isDestroyed: () => false, isLoading: () => false, executeJavaScript: js => js.includes('message-bubble') ? Promise.resolve({ n: 1, len: 1 }) : new Promise(r => setTimeout(() => r({ busy: false }), 1200)) };
