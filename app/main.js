@@ -725,10 +725,13 @@ const RESIDUE_JS = last => `const LAST = ${JSON.stringify(Array.isArray(last) ? 
   const hashK = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length.toString(36); };
   const curText = () => String(el.value ?? el.innerText ?? el.textContent ?? '');
   // P1-1 / P1-5：只认最近 3 次写入——全文一致（head+hash），或是它被截断后剩下的开头（#20，至少 8 个字）。
-  //       唯一的格式兜底：整框只有一行，且是门铃首行「📨 你有 N 封新信（收件地址 xxx）[，其中 N 封已附全文]」本身或它被截断后的开头
+  //       唯一的格式兜底：整框只有一行，且是门铃首行本身或它被截断后的开头
   //       （那是被截断、又不在最近 3 条里的旧门铃首行）。多一行、多一个字不合格式，都按用户草稿处理，一字不动。
-  const isBellHead = k => { if (/\\n/.test(k)) return false; const m = /^📨 你有 \\d+ 封新信（收件地址 [\\w.@-]*(.*)$/.exec(k); if (!m) return false;
-    const tail = m[1].replace(/\\d+/, '9'); return '），其中 9 封已附全文'.startsWith(tail); };
+  //       #24：门铃首行有两种（普通 / 未登记地址），都只认单行。站内信首行「📨 信箱来信｜来自 …」后面是自由文本，
+  //       分不清残字和用户补的话（P1-6），不做格式兜底，只靠上面的最近 3 次写入全文 / 截断开头来认。
+  const BELL_HEADS = [[/^📨 你有 \\d+ 封新信（收件地址 [\\w.@-]*/, '），其中 9 封已附全文'], [/^📨 你有 \\d+ 封来自未登记地址的信（收件地址 [\\w.@-]*/, '），未单独提醒']];
+  const isBellHead = k => { if (/\\n/.test(k)) return false;
+    return BELL_HEADS.some(([re, rest]) => { const m = re.exec(k); return !!m && rest.startsWith(k.slice(m[0].length).replace(/\\d+/, '9')); }); };
   const isOurs = s => { const k = normK(s); if (!k) return false;
     const h = k.slice(0, 40), x = hashK(k);
     if (LAST.some(l => l && l.head === h && l.hash === x)) return true;
