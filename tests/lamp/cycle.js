@@ -18,14 +18,18 @@ for (const acc of [...new Set(probes.map(x => x.acc))]) {
   // 第一遍：每个周期的独立结束与灯灭
   segs.forEach((g, i) => {
     const next = segs[i + 1] ? segs[i + 1].s : Infinity;
-    // 只看探针转闲后 30s 内的回复记录；取转闲后最先报出的 stable（之后的 stable 多是用户接着发的新消息，不算本周期）；转闲前就已稳定（pill 滞留）则取转闲前最后一条 stable
-    const lim = Math.min(next, g.e === null ? Infinity : g.e + 30000);
-    const stables = replies.filter(x => x.acc === acc && x.state === 'stable' && x.t >= g.s && x.t < lim + 6000 && x.at >= g.s && x.at < lim), ge = g.e === null ? Infinity : g.e;
-    const pick = stables.find(x => x.t >= ge) || stables.filter(x => x.t < ge).pop();
-    g.end = pick ? pick.at : null;
+    // 只看本周期内（到下一周期开始前）的回复记录。先取转闲后最先报出的 stable；转闲前就已稳定（pill 滞留）则取转闲前最后一条 stable。
+    // 之后同一条气泡（条数 n 不变）又增长 = 回复中途停顿后继续，结束顺延到该气泡最后一次稳定；条数 n 增加 = 用户发了新消息，不算本周期。
+    // 结束须在探针转闲后 30s 内，否则视为无独立结束（K13、T3）。
+    const lim = Math.min(next, g.e === null ? Infinity : g.e + 30000), ge = g.e === null ? Infinity : g.e;
+    const rs = replies.filter(x => x.acc === acc && x.t >= g.s && x.t < next + 6000 && (x.at || x.t) >= g.s && (x.at || x.t) < next);
+    const stables = rs.filter(x => x.state === 'stable');
+    let pick = stables.find(x => x.t >= ge) || stables.filter(x => x.t < ge).pop();
+    if (pick) { const same = rs.filter(x => x.t > pick.t && x.n === pick.n); if (same.some(x => x.state === 'growing')) { const ls = same.filter(x => x.state === 'stable').pop(), lg = same.filter(x => x.state === 'growing').pop(); pick = ls && ls.t > lg.t ? ls : null; } }
+    g.end = pick && pick.at < lim ? pick.at : null; g.n = pick ? pick.n : undefined;
     g.off = g.end === null ? null : lights.find(x => x.acc === acc && !x.on && x.t >= g.s && x.t < next);
-    // 用户触发：上一周期结束后、本周期开始前（容许 2s）出现过回复增长（用户发了新消息），本周期是正常的下一次运行，不算复红
-    const pv = segs[i - 1]; g.user = !!pv && replies.some(x => x.acc === acc && x.state === 'growing' && x.t > (pv.end !== null ? pv.end : pv.e) && x.t <= g.s + 2000);
+    // 用户触发：上一周期有独立结束，且其后、本周期开始前（容许 2s）出现过气泡条数增加的增长（用户发了新消息），本周期是正常的下一次运行，不算复红
+    const pv = segs[i - 1]; g.user = !!pv && pv.end !== null && replies.some(x => x.acc === acc && x.state === 'growing' && x.n > pv.n && x.t > pv.end && x.t <= g.s + 2000);
   });
   // 「非预期 busy」：不属于用户触发周期的探针命中
   const strayIn = (a, b, skipBefore) => probes.some(x => x.acc === acc && x.busy && x.t >= a && x.t < b && !segs.some(h => (h.user || (skipBefore && h.s < skipBefore.s && skipBefore.user)) && x.t >= h.s && (h.e === null || x.t <= h.e)));
