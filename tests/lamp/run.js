@@ -29,7 +29,7 @@ ok('watchUsage never touches work state', /busyAt|\.working\b|workOf\(|workPulse
   const dir = path.join(__dirname, 'fixtures');
   for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.html')).sort()) {
     await page.setContent('<!doctype html><body style="margin:0">' + fs.readFileSync(path.join(dir, f), 'utf8') + '</body>');
-    await page.evaluate(() => document.querySelectorAll('.scroller').forEach(s => { s.scrollTop = 1e6; }));
+    await page.evaluate(() => document.querySelectorAll('.scroller, ._1rkfhlb2').forEach(s => { s.scrollTop = 1e6; }));
     const v = await page.evaluate(probe);
     // 隐私（P0）：探针返回值里不得出现页面上任何消息 / 气泡原文（只允许固定前缀）
     const texts = await page.evaluate(() => [...document.querySelectorAll('.bub, div, span, article')].filter(e => e.children.length === 0).map(e => e.textContent.trim()).filter(t => t.length > 3));

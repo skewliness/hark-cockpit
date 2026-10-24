@@ -314,11 +314,11 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
   const inMessages = n => { const m = n.closest(MSG); if (m && !m.contains(el)) return 'in-messages:selector';
     for (let a = n; a && a !== document.body && a !== document.documentElement; a = a.parentElement) { if (a.contains(el)) break; if (repeated(a)) return 'in-messages:repeated'; }
     return ''; };
-  const rounded = n => { for (let i = 0; n && i < 4; i++, n = n.parentElement) { const cs = getComputedStyle(n); if (parseFloat(cs.borderTopLeftRadius) >= 10 && (parseFloat(cs.borderTopWidth) > 0 || !/rgba\\(0, 0, 0, 0\\)|transparent/.test(cs.backgroundColor))) return true; } return false; };
+  const rounded = n => { for (let i = 0; n && i < 6; i++, n = n.parentElement) { const cs = getComputedStyle(n); if (parseFloat(cs.borderTopLeftRadius) >= 10 && (parseFloat(cs.borderTopWidth) > 0 || !/rgba\\(0, 0, 0, 0\\)|transparent/.test(cs.backgroundColor))) return true; } return false; };
   // 诊断快照：祖先链只记结构（标签、role、class 前 60 字、data-* 名、定位、滚动、圆角），不记任何正文
   const chain = n => { const out = []; for (let a = n; a && a !== document.documentElement && out.length < 30; a = a.parentElement) { const cs = getComputedStyle(a);
     out.push({ tag: a.tagName.toLowerCase(), id: a.id || undefined, role: a.getAttribute('role') || undefined, cls: cls(a).slice(0, 60) || undefined,
-      data: [...a.attributes].map(x => x.name).filter(x => x.startsWith('data-')).slice(0, 6), pos: cs.position, oy: cs.overflowY, scroll: scrollBox(a) || undefined, radius: parseFloat(cs.borderTopLeftRadius) || undefined, hasComposer: a.contains(el) || undefined }); }
+      data: [...a.attributes].map(x => x.name).filter(x => x.startsWith('data-')).slice(0, 6), tid: (a.getAttribute('data-testid') || '').slice(0, 40) || undefined, phase: (a.getAttribute('data-phase') || '').slice(0, 20) || undefined, pos: cs.position, oy: cs.overflowY, scroll: scrollBox(a) || undefined, radius: parseFloat(cs.borderTopLeftRadius) || undefined, hasComposer: a.contains(el) || undefined }); }
     return out; };
   const seen = [];
   const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -329,16 +329,25 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
     if (r.bottom > box.top + 4 || r.bottom < box.top - 200) continue;          // 必须紧贴在输入框上方
     if (r.right < box.left || r.left > box.right || r.width > box.width * 0.8) continue;   // 横向落在输入框范围内，且比输入框窄
     if (!shown(p) || String(p.innerText || '').trim().length > 40) continue;
-    const skip = inMessages(p) || (rounded(p) ? '' : 'not-rounded');
+    // 真实 Hark（2026-10-24 真机诊断）：状态气泡的第 5 层祖先带 data-testid + data-phase，且位于消息滚动区内。带 data-phase 的直接认定
+    let ph = null; for (let a = p, i = 0; a && i < 6 && !ph; a = a.parentElement, i++) if (a.hasAttribute('data-phase') && !a.contains(el)) ph = a;
+    const skip = inMessages(p) || (ph || rounded(p) ? '' : 'not-rounded');
     if (seen.length < 3) seen.push({ verdict: skip || 'pill', prefix: skip ? undefined : txt.match(PILL)[0], chain: chain(p) });   // 不记正文：只有判为气泡的才留下命中的固定前缀（如「正在」）
-    if (!skip) return { busy: true, rule: 'pill', seen };
+    if (!skip) return { busy: true, rule: ph ? 'pill:phase' : 'pill', seen };
   }
+  // 无气泡时：记一次输入框正上方最近的一个文本块的结构（不含正文），用来对照真实消息节点长什么样
+  if (!seen.length) { let best = null, bb = -1e9; const tw2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let k = 0;
+    for (let t = tw2.nextNode(); t && k < 4000; t = tw2.nextNode(), k++) { const q = t.parentElement; if (!q || el.contains(q) || !t.nodeValue.trim()) continue; const r = q.getBoundingClientRect();
+      if (r.bottom <= box.top + 4 && r.bottom > bb && r.width > 0 && r.right > box.left && r.left < box.right) { bb = r.bottom; best = q; } }
+    if (best && box.top - bb < 300) seen.push({ verdict: 'near-text', chain: chain(best) }); }
   return { busy: false, rule: '', seen }; })()`;
 // 诊断：输入框附近每种「正在…」候选结构记一次（按判定 + 祖先链签名去重，最多 40 条），用户在侧栏导出诊断即可拿到真实 DOM 结构
 const lampSeen = new Set();
+const lampLog = [];   // 状态灯诊断单独存，最多 300 条，不被额度诊断挤掉
+function lampAdd(x) { if (lampLog.length < 300) lampLog.push(x); }
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
-    if (lampSeen.has(sig) || lampSeen.size >= 40) continue; lampSeen.add(sig); diagAdd({ t: Date.now(), lamp: 'dom', verdict: x.verdict, prefix: x.prefix, chain: x.chain }); }
+    if (lampSeen.has(sig) || lampSeen.size >= 40) continue; lampSeen.add(sig); lampAdd({ t: Date.now(), lamp: 'dom', verdict: x.verdict, prefix: x.prefix, chain: x.chain }); }
 }
 function workProbe(wc) {
   if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(false);
@@ -413,7 +422,10 @@ function parseUsage(obj) {
 }
 // 状态灯流样本（只记事件名、类型字段和字段名，不记正文），最多 200 条
 const lampStreams = new Map(); let lampStreamN = 0, lampStreamCount = 0;
-function lampStreamDiag(x) { if (lampStreamCount++ < 200) diagAdd(x); }
+function lampStreamDiag(x) { if (lampStreamCount++ < 200) lampAdd(x); }
+const lampPath = u => { try { return new URL(u).pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, ':id').replace(/\/\d{4,}/g, '/:n'); } catch { return ''; } };
+const lampReq = new Map();   // hark.com 的 Fetch/XHR：记开始时间，结束时若持续 >2 秒（疑似流式回复通道）记一条
+const lampWs = new Set(); let lampWsFrames = 0;
 function evShape(data) { const len = String(data || '').length; try { const o = JSON.parse(data); const kind = o && typeof o === 'object' ? ['type', 'event', 'kind', 't', 'op', 'name'].map(k => typeof o[k] === 'string' ? k + '=' + o[k].slice(0, 40) : '').filter(Boolean).join(' ') : ''; return { len, kind, keys: o && typeof o === 'object' ? Object.keys(o).slice(0, 15) : typeof o }; } catch { return { len, kind: 'non-json' }; } }
 const SKIP_HEADERS = /^(cookie|host|content-length|accept-encoding|connection|origin|referer|sec-|user-agent|:)/i;
 function watchUsage(acc, wc) {
@@ -425,6 +437,10 @@ function watchUsage(acc, wc) {
     if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') { reqs.delete(p.requestId); if (lampStreams.has(p.requestId)) { lampStreamDiag({ t: Date.now(), lamp: 'stream-end', id: lampStreams.get(p.requestId).n, failed: method === 'Network.loadingFailed' }); lampStreams.delete(p.requestId); } }
     if (method === 'Network.responseReceived' && isHarkHost(p.response.url) && /event-stream|x-ndjson/i.test(p.response.mimeType || '')) { const n = ++lampStreamN; lampStreams.set(p.requestId, { n, type: p.type }); lampStreamDiag({ t: Date.now(), lamp: 'stream', id: n, type: p.type, mime: p.response.mimeType, url: new URL(p.response.url).pathname }); }
     if (method === 'Network.eventSourceMessageReceived' && lampStreams.has(p.requestId)) lampStreamDiag({ t: Date.now(), lamp: 'sse', id: lampStreams.get(p.requestId).n, ev: p.eventName || '', ...evShape(p.data) });
+    if (method === 'Network.responseReceived' && isHarkHost(p.response.url) && /^(Fetch|XHR)$/.test(p.type)) lampReq.set(p.requestId, { at: Date.now(), path: lampPath(p.response.url), mime: p.response.mimeType, method: (reqs.get(p.requestId) || {}).method });
+    if ((method === 'Network.loadingFinished' || method === 'Network.loadingFailed') && lampReq.has(p.requestId)) { const q = lampReq.get(p.requestId); lampReq.delete(p.requestId); const ms = Date.now() - q.at; if (ms > 2000) lampStreamDiag({ t: Date.now(), lamp: 'long-req', ms, bytes: p.encodedDataLength, ...q }); }
+    if (method === 'Network.webSocketCreated' && isHarkHost(p.url)) { lampWs.add(p.requestId); lampStreamDiag({ t: Date.now(), lamp: 'ws', path: lampPath(p.url) }); }
+    if (method === 'Network.webSocketFrameReceived' && lampWs.has(p.requestId) && lampWsFrames++ < 120) lampStreamDiag({ t: Date.now(), lamp: 'ws-frame', ...evShape(p.response && p.response.payloadData) });
     if (method === 'Network.webSocketCreated' || method === 'Network.eventSourceMessageReceived' || method === 'Network.webSocketFrameReceived') diagWs(method, p);
     if (method !== 'Network.responseReceived') return;
     const r = p.response;
@@ -463,10 +479,10 @@ function diagWs(method, p) {
 }
 ipcMain.handle('exportDiag', async () => {
   let f = path.join(app.getPath('desktop'), 'hark-cockpit-diag.json');
-  const data = JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: usageCfg.url.split('?')[0] } : null, entries: diag }, null, 2);
+  const data = JSON.stringify({ version: boot.version || app.getVersion(), usageCfg: usageCfg.url ? { url: usageCfg.url.split('?')[0] } : null, entries: diag, lamp: lampLog }, null, 2);
   try { fs.writeFileSync(f, data); } catch { f = path.join(app.getPath('userData'), 'hark-cockpit-diag.json'); fs.writeFileSync(f, data); }
   shell.showItemInFolder(f);
-  toast(`诊断文件已保存（${diag.length} 条记录），已打开所在文件夹`);
+  toast(`诊断文件已保存（${diag.length} 条记录，状态灯 ${lampLog.length} 条），已打开所在文件夹`);
 });
 async function fetchUsage(acc) {
   if (!usageCfg.url) return;
