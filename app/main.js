@@ -356,7 +356,7 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
 const lampSeen = new Set();
 const lampLog = [];   // 状态灯诊断单独存，最多 300 条，不被额度诊断挤掉
 const lampProbeLast = new Map();
-const LAMP_QUOTA = { probe: 300, light: 200, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
+const LAMP_QUOTA = { probe: 300, light: 200, reply: 300, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
 function lampAdd(x) { lampLog.push(x); const k = x.lamp, q = LAMP_QUOTA[k] || 40; let n = 0; for (const y of lampLog) if (y.lamp === k) n++; if (n > q) lampLog.splice(lampLog.findIndex(y => y.lamp === k), 1); }   // 按类别配额，各类满了丢本类最旧，保留新到样本
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
@@ -365,6 +365,21 @@ function lampDiag(seen) {
 function workProbe(wc) {
   if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(false);
   return Promise.race([wc.executeJavaScript(stopJs(), false).then(v => { if (v && v.seen) lampDiag(v.seen); return v && v.busy ? (v.rule || 'busy') : false; }, () => false), new Promise(r => setTimeout(() => r(false), 1500))]);   // 命中时返回规则名
+}
+// 独立的回复完成标志（只给诊断用，不参与点灯）：数最后一条 message-bubble 的字数和气泡条数，和状态灯探针不同源。只回两个数字，不含正文
+const replyJs = `(() => { const b = document.querySelectorAll('[data-testid="message-bubble"]'); const l = b[b.length - 1]; return { n: b.length, len: l ? String(l.innerText || '').length : 0 }; })()`;
+const REPLY_STABLE_MS = 5000;
+const replyLast = new Map();   // key -> { sig, at, state }
+function replyProbe(wc) {
+  if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(null);
+  return Promise.race([wc.executeJavaScript(replyJs, false).then(v => v && typeof v.n === 'number' ? v : null, () => null), new Promise(r => setTimeout(() => r(null), 1500))]);
+}
+// 回复字数/条数变化记 growing；连续 ≥5s 不变记 stable，at = 最后一次变化的时刻（即独立的「回复结束」时刻）
+function replyDiag(key, ai, view, v, now) {
+  if (!v) return; const sig = v.n + ':' + v.len, r = replyLast.get(key);
+  if (!r) { replyLast.set(key, { sig, at: now, state: 'stable' }); lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'stable', at: now, n: v.n }); return; }
+  if (r.sig !== sig) { r.sig = sig; r.at = now; if (r.state !== 'growing') { r.state = 'growing'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'growing', n: v.n }); } return; }
+  if (r.state === 'growing' && now - r.at >= REPLY_STABLE_MS) { r.state = 'stable'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'stable', at: r.at, n: v.n }); }
 }
 let workTicking = false;
 async function workTick() {
@@ -378,6 +393,8 @@ async function workTick() {
       const hits = await Promise.all([views.get(a.id), inboxViews.get(a.id)].map(v => workProbe(v?.webContents)));
       // 运行周期诊断：每个窗口的主视图 / 收信视图，探针结果（命中规则或空闲）变化时记一条；灯亮灭变化时记一条。只记序号、规则名、时间，不含正文
       const ai = accounts.indexOf(a);
+      const vs = [views.get(a.id), inboxViews.get(a.id)], reps = await Promise.all(vs.map(v => replyProbe(v?.webContents)));
+      reps.forEach((v, k) => replyDiag(a.id + ':' + k, ai, k ? 'inbox' : 'main', v, now));
       hits.forEach((h, k) => { const key = a.id + ':' + k, val = h || ''; if (lampProbeLast.get(key) !== val) { lampProbeLast.set(key, val); lampAdd({ t: now, lamp: 'probe', acc: ai, view: k ? 'inbox' : 'main', busy: !!h, rule: h || undefined }); } });
       if (hits.some(Boolean)) w.busyAt = Date.now();
       const on = !!w.busyAt && Date.now() - w.busyAt < WORK_IDLE_MS;
