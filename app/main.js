@@ -276,27 +276,51 @@ app.whenReady().then(() => {
 });
 
 // ===== 工作状态灯 =====
-// 绿=空闲中、红=工作中、灰=未登录。两路信号任一命中即算工作中：
-// 1) 页面里输入框附近出现「停止 / Stop」按钮（主页面和项目收信页都查）；2) 主页面有 hark.com 的流式响应（SSE / ndjson）还没结束。
+// 绿=空闲中、红=工作中、灰=未登录。只看页面：输入框发送位的「停止」按钮，或输入框正上方的「正在…」圆角状态气泡（主页面和项目收信页都查）。
 // 信号消失后再等 8 秒才判空闲，免得两段输出之间来回闪。
-const WORK_IDLE_MS = 8000, WORK_POLL_MS = 2000, WORK_STREAM_MAX_MS = 10 * 60 * 1000;
-const work = {};   // id -> { busyAt, working, streams: Map<requestId, startedAt> }
-const workOf = id => work[id] || (work[id] = { busyAt: 0, working: false, streams: new Map() });
+// 网络流（SSE / ndjson）暂不点灯：常驻通知流、心跳、断线重连都会误报，且 Hark 的事件格式未知。先只把 hark.com 流的事件类型
+// 记进诊断（不含正文），拿到真实样本后再按白名单接回来。
+const WORK_IDLE_MS = 8000, WORK_POLL_MS = 2000;
+const work = {};   // id -> { busyAt, working }
+const workOf = id => work[id] || (work[id] = { busyAt: 0, working: false });
 function isWorking(id) { return !!loginState[id] && !!work[id]?.working; }
-function workStreamStart(id, rid) { const w = workOf(id); w.streams.set(rid, Date.now()); workPulse(id); }
-function workStreamEnd(id, rid) { const w = work[id]; if (w && w.streams.delete(rid)) w.busyAt = Date.now(); }
-function workPulse(id) { const w = workOf(id); w.busyAt = Date.now(); if (!w.working) { w.working = true; pushState(); } }
-// 用函数延后拼接：PICK_COMPOSER 在文件后面才定义
+const isHarkHost = u => { try { const h = new URL(u).hostname.toLowerCase(); return h === 'hark.com' || h.endsWith('.hark.com'); } catch { return false; } };
+// 用函数延后拼接：PICK_COMPOSER 在文件后面才定义。返回 { busy, rule, seen }：rule 是命中的规则，seen 是输入框附近「正在…」候选的结构快照（给诊断用）
 const stopJs = () => `(() => { ${PICK_COMPOSER}
-  const shown = b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== 'hidden'; };
-  const root = el ? (el.closest('form') || el.parentElement?.parentElement?.parentElement?.parentElement || document) : document;
-  const label = b => ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.getAttribute('data-testid') || '') + ' ' + (String(b.innerText || '').length <= 16 ? b.innerText : '')).trim();
-  if ([...root.querySelectorAll('button,[role="button"]')].some(b => shown(b) && !b.disabled && /(^|[^a-z])(stop|stop generating|stop response|interrupt|cancel response)([^a-z]|$)|停止|中断|取消生成/i.test(label(b)))) return true;
-  // Hark 干活时输入框上方会浮出一个圆角小气泡（如「正在查看您的文件。」）：找输入框正上方、窄、圆角、短句的那一个
-  if (!el) return false;
+  const shown = b => { const r = b.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || getComputedStyle(b).visibility === 'hidden') return false;
+    let op = 1; for (let a = b, i = 0; a && i < 8; a = a.parentElement, i++) op *= parseFloat(getComputedStyle(a).opacity);   // 淡出中的气泡（祖先 opacity 低）不算
+    return op > 0.3; };
+  if (!el) return { busy: false, rule: 'no-composer', seen: [] };
   const box = (() => { const f = el.closest('form'); const fr = f && f.getBoundingClientRect(); const er = el.getBoundingClientRect(); return fr && fr.height < 320 ? fr : er; })();
-  const PILL = /^(正在|稍等|思考中|处理中)|^(thinking|working|searching|reading|looking|checking|running|writing|browsing|analy[sz]ing|planning)\b/i;
-  const rounded = n => { for (let i = 0; n && i < 4; i++, n = n.parentElement) { const cs = getComputedStyle(n); if (parseFloat(cs.borderTopLeftRadius) >= 10 && (parseFloat(cs.borderTopWidth) > 0 || !/rgba\(0, 0, 0, 0\)|transparent/.test(cs.backgroundColor))) return true; } return false; };
+  const root = el.closest('form') || el.parentElement?.parentElement?.parentElement?.parentElement || document;
+  // 停止按钮：整个标签就是「停止 / Stop …」，在输入框右半边（发送位），且不是录音 / 语音输入的停止
+  const label = b => String(b.getAttribute('aria-label') || b.title || (String(b.innerText || '').length <= 16 ? b.innerText : '')).trim().replace(/\\s+/g, ' ');
+  const STOP = /^(stop|stop generating|stop response|stop responding|interrupt|cancel response|停止|停止生成|停止回复|停止回答|中断|取消生成)$/i;
+  const NOT_STOP = /录音|录制|语音|麦克风|听写|recording|record|dictation|voice|mic|audio/i;
+  for (const b of root.querySelectorAll('button,[role="button"]')) {
+    if (!shown(b) || b.disabled) continue;
+    const l = label(b), tid = b.getAttribute('data-testid') || '';
+    if (NOT_STOP.test(l + ' ' + tid) || !(STOP.test(l) || /^stop(-|_)?(button|generating|response)?$/i.test(tid))) continue;
+    const r = b.getBoundingClientRect(); const cx = r.left + r.width / 2;
+    if (cx >= box.left + box.width * 0.5 && cx <= box.right + 8 && r.top >= box.top - 8 && r.bottom <= box.bottom + 8) return { busy: true, rule: 'stop-button', seen: [] };
+  }
+  // 状态气泡：输入框正上方、窄、圆角、短句（如「正在查看您的文件。」），且不在消息列表里
+  const PILL = /^(正在|稍等|思考中|处理中)|^(thinking|working|searching|reading|looking|checking|running|writing|browsing|analy[sz]ing|planning)\\b/i;
+  const MSG = '[role="log"],[role="feed"],[role="article"],article,[data-message-id],[data-message-author-role]';
+  const scrollBox = a => { const oy = getComputedStyle(a).overflowY; return (oy === 'auto' || oy === 'scroll') && a.scrollHeight > a.clientHeight + 1; };
+  // 消息列表项：自身或某个祖先（到包含输入框的那层为止）有同标签同 class 的兄弟——聊天记录是重复的行，状态气泡是单独一个
+  const cls = a => String(a.className && a.className.baseVal !== undefined ? a.className.baseVal : a.className || '').trim();
+  const repeated = a => { const c = cls(a); if (!c || !a.parentElement) return false; let k = 0; for (const x of a.parentElement.children) if (x !== a && x.tagName === a.tagName && cls(x) === c && ++k >= 1) return true; return false; };
+  const inMessages = n => { const m = n.closest(MSG); if (m && !m.contains(el)) return 'in-messages:selector';
+    for (let a = n; a && a !== document.body && a !== document.documentElement; a = a.parentElement) { if (a.contains(el)) break; if (repeated(a)) return 'in-messages:repeated'; }
+    return ''; };
+  const rounded = n => { for (let i = 0; n && i < 4; i++, n = n.parentElement) { const cs = getComputedStyle(n); if (parseFloat(cs.borderTopLeftRadius) >= 10 && (parseFloat(cs.borderTopWidth) > 0 || !/rgba\\(0, 0, 0, 0\\)|transparent/.test(cs.backgroundColor))) return true; } return false; };
+  // 诊断快照：祖先链只记结构（标签、role、class 前 60 字、data-* 名、定位、滚动、圆角），不记任何正文；候选本身的短句（≤40 字）保留
+  const chain = n => { const out = []; for (let a = n; a && a !== document.documentElement && out.length < 30; a = a.parentElement) { const cs = getComputedStyle(a);
+    out.push({ tag: a.tagName.toLowerCase(), id: a.id || undefined, role: a.getAttribute('role') || undefined, cls: cls(a).slice(0, 60) || undefined,
+      data: [...a.attributes].map(x => x.name).filter(x => x.startsWith('data-')).slice(0, 6), pos: cs.position, oy: cs.overflowY, scroll: scrollBox(a) || undefined, radius: parseFloat(cs.borderTopLeftRadius) || undefined, hasComposer: a.contains(el) || undefined }); }
+    return out; };
+  const seen = [];
   const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   for (let t = tw.nextNode(); t; t = tw.nextNode()) {
     const txt = t.nodeValue.trim(); if (!txt || txt.length > 40 || !PILL.test(txt)) continue;
@@ -305,12 +329,20 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
     if (r.bottom > box.top + 4 || r.bottom < box.top - 200) continue;          // 必须紧贴在输入框上方
     if (r.right < box.left || r.left > box.right || r.width > box.width * 0.8) continue;   // 横向落在输入框范围内，且比输入框窄
     if (!shown(p) || String(p.innerText || '').trim().length > 40) continue;
-    if (rounded(p)) return true;
+    const skip = inMessages(p) || (rounded(p) ? '' : 'not-rounded');
+    if (seen.length < 3) seen.push({ text: txt, verdict: skip || 'pill', chain: chain(p) });
+    if (!skip) return { busy: true, rule: 'pill', seen };
   }
-  return false; })()`;
+  return { busy: false, rule: '', seen }; })()`;
+// 诊断：输入框附近每种「正在…」候选结构记一次（按判定 + 祖先链签名去重，最多 40 条），用户在侧栏导出诊断即可拿到真实 DOM 结构
+const lampSeen = new Set();
+function lampDiag(seen) {
+  for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
+    if (lampSeen.has(sig) || lampSeen.size >= 40) continue; lampSeen.add(sig); diagAdd({ t: Date.now(), lamp: 'dom', verdict: x.verdict, text: x.text, chain: x.chain }); }
+}
 function workProbe(wc) {
   if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(false);
-  return Promise.race([wc.executeJavaScript(stopJs(), false).then(v => v === true, () => false), new Promise(r => setTimeout(() => r(false), 1500))]);
+  return Promise.race([wc.executeJavaScript(stopJs(), false).then(v => { if (v && v.seen) lampDiag(v.seen); return !!(v && v.busy); }, () => false), new Promise(r => setTimeout(() => r(false), 1500))]);
 }
 let workTicking = false;
 async function workTick() {
@@ -320,10 +352,9 @@ async function workTick() {
     const now = Date.now();
     await Promise.all(accounts.map(async a => {
       const w = workOf(a.id);
-      if (!loginState[a.id]) { if (w.working) { w.working = false; changed = true; } w.streams.clear(); return; }
-      for (const [rid, t] of w.streams) if (now - t > WORK_STREAM_MAX_MS) w.streams.delete(rid);   // 漏掉结束事件的流，10 分钟后作废
+      if (!loginState[a.id]) { if (w.working) { w.working = false; changed = true; } return; }
       const hits = await Promise.all([views.get(a.id), inboxViews.get(a.id)].map(v => workProbe(v?.webContents)));
-      if (hits.some(Boolean) || w.streams.size) w.busyAt = Date.now();
+      if (hits.some(Boolean)) w.busyAt = Date.now();
       const on = !!w.busyAt && Date.now() - w.busyAt < WORK_IDLE_MS;
       if (on !== w.working) { w.working = on; changed = true; }
     }));
@@ -380,6 +411,10 @@ function parseUsage(obj) {
   walk(obj, '', 0);
   return out;
 }
+// 状态灯流样本（只记事件名、类型字段和字段名，不记正文），最多 200 条
+const lampStreams = new Map(); let lampStreamN = 0, lampStreamCount = 0;
+function lampStreamDiag(x) { if (lampStreamCount++ < 200) diagAdd(x); }
+function evShape(data) { const len = String(data || '').length; try { const o = JSON.parse(data); const kind = o && typeof o === 'object' ? ['type', 'event', 'kind', 't', 'op', 'name'].map(k => typeof o[k] === 'string' ? k + '=' + o[k].slice(0, 40) : '').filter(Boolean).join(' ') : ''; return { len, kind, keys: o && typeof o === 'object' ? Object.keys(o).slice(0, 15) : typeof o }; } catch { return { len, kind: 'non-json' }; } }
 const SKIP_HEADERS = /^(cookie|host|content-length|accept-encoding|connection|origin|referer|sec-|user-agent|:)/i;
 function watchUsage(acc, wc) {
   try { wc.debugger.attach('1.3'); } catch { return; }
@@ -387,9 +422,9 @@ function watchUsage(acc, wc) {
   wc.debugger.sendCommand('Network.enable').catch(() => {});
   wc.debugger.on('message', async (_e, method, p) => {
     if (method === 'Network.requestWillBeSent') reqs.set(p.requestId, p.request);
-    if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') { reqs.delete(p.requestId); workStreamEnd(acc.id, p.requestId); }
-    if (method === 'Network.eventSourceMessageReceived') workPulse(acc.id);
-    if (method === 'Network.responseReceived' && /hark\.com/.test(p.response.url) && /event-stream|x-ndjson/i.test(p.response.mimeType || '')) workStreamStart(acc.id, p.requestId);
+    if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') { reqs.delete(p.requestId); if (lampStreams.has(p.requestId)) { lampStreamDiag({ t: Date.now(), lamp: 'stream-end', id: lampStreams.get(p.requestId).n, failed: method === 'Network.loadingFailed' }); lampStreams.delete(p.requestId); } }
+    if (method === 'Network.responseReceived' && isHarkHost(p.response.url) && /event-stream|x-ndjson/i.test(p.response.mimeType || '')) { const n = ++lampStreamN; lampStreams.set(p.requestId, { n, type: p.type }); lampStreamDiag({ t: Date.now(), lamp: 'stream', id: n, type: p.type, mime: p.response.mimeType, url: new URL(p.response.url).pathname }); }
+    if (method === 'Network.eventSourceMessageReceived' && lampStreams.has(p.requestId)) lampStreamDiag({ t: Date.now(), lamp: 'sse', id: lampStreams.get(p.requestId).n, ev: p.eventName || '', ...evShape(p.data) });
     if (method === 'Network.webSocketCreated' || method === 'Network.eventSourceMessageReceived' || method === 'Network.webSocketFrameReceived') diagWs(method, p);
     if (method !== 'Network.responseReceived') return;
     const r = p.response;
