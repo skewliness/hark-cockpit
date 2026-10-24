@@ -381,27 +381,29 @@ function replyDiag(key, ai, view, v, now) {
   if (r.sig !== sig) { r.sig = sig; r.at = now; if (r.state !== 'growing') { r.state = 'growing'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'growing', n: v.n }); } return; }
   if (r.state === 'growing' && now - r.at >= REPLY_STABLE_MS) { r.state = 'stable'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'stable', at: r.at, n: v.n }); }
 }
+const replyPending = new Set();   // 回复诊断探针在飞的视图，避免慢页面上堆积
 let workTicking = false;
 async function workTick() {
   if (workTicking) return; workTicking = true;
   try {
-    let changed = false;
-    const now = Date.now();
+    let changed = false; const lights = [];
     await Promise.all(accounts.map(async a => {
       const w = workOf(a.id);
       if (!loginState[a.id]) { if (w.working) { w.working = false; changed = true; } return; }
-      const hits = await Promise.all([views.get(a.id), inboxViews.get(a.id)].map(v => workProbe(v?.webContents)));
+      const vs = [views.get(a.id), inboxViews.get(a.id)], ai = accounts.indexOf(a);
+      // 回复完成诊断：不 await、不参与点灯，结果回来时按回来的时刻记录，绝不拖慢灯
+      vs.forEach((v, k) => { const key = a.id + ':' + k; if (replyPending.has(key)) return; replyPending.add(key);
+        replyProbe(v?.webContents).then(r => replyDiag(key, ai, k ? 'inbox' : 'main', r, Date.now()), () => {}).finally(() => replyPending.delete(key)); });
+      const hits = await Promise.all(vs.map(v => workProbe(v?.webContents)));
+      const tp = Date.now();
       // 运行周期诊断：每个窗口的主视图 / 收信视图，探针结果（命中规则或空闲）变化时记一条；灯亮灭变化时记一条。只记序号、规则名、时间，不含正文
-      const ai = accounts.indexOf(a);
-      const vs = [views.get(a.id), inboxViews.get(a.id)], reps = await Promise.all(vs.map(v => replyProbe(v?.webContents)));
-      reps.forEach((v, k) => replyDiag(a.id + ':' + k, ai, k ? 'inbox' : 'main', v, now));
-      hits.forEach((h, k) => { const key = a.id + ':' + k, val = h || ''; if (lampProbeLast.get(key) !== val) { lampProbeLast.set(key, val); lampAdd({ t: now, lamp: 'probe', acc: ai, view: k ? 'inbox' : 'main', busy: !!h, rule: h || undefined }); } });
-      if (hits.some(Boolean)) w.busyAt = Date.now();
-      const on = !!w.busyAt && Date.now() - w.busyAt < WORK_IDLE_MS;
-      if (on !== w.working) { w.working = on; changed = true; lampAdd({ t: now, lamp: 'light', acc: ai, on }); }
+      hits.forEach((h, k) => { const key = a.id + ':' + k, val = h || ''; if (lampProbeLast.get(key) !== val) { lampProbeLast.set(key, val); lampAdd({ t: tp, lamp: 'probe', acc: ai, view: k ? 'inbox' : 'main', busy: !!h, rule: h || undefined }); } });
+      if (hits.some(Boolean)) w.busyAt = tp;
+      const on = !!w.busyAt && tp - w.busyAt < WORK_IDLE_MS;
+      if (on !== w.working) { w.working = on; changed = true; lights.push({ acc: ai, on }); }
     }));
     for (const id of Object.keys(work)) if (!accounts.some(a => a.id === id)) delete work[id];
-    if (changed) pushState();
+    if (changed) { pushState(); const t = Date.now(); lights.forEach(x => lampAdd({ t, lamp: 'light', ...x })); }   // light 记录取灯实际推送的时刻
   } finally { workTicking = false; }
 }
 app.whenReady().then(() => setInterval(() => { workTick().catch(() => {}); }, WORK_POLL_MS));
