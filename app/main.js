@@ -284,7 +284,7 @@ const WORK_IDLE_MS = 8000, WORK_POLL_MS = 2000;
 const work = {};   // id -> { busyAt, working }
 const workOf = id => work[id] || (work[id] = { busyAt: 0, working: false });
 function isWorking(id) { return !!loginState[id] && !!work[id]?.working; }
-const isHarkHost = u => { try { const h = new URL(u).hostname.toLowerCase(); return h === 'hark.com' || h.endsWith('.hark.com'); } catch { return false; } };
+const isHarkHost = u => { try { const h = new URL(u).hostname.toLowerCase().replace(/\.$/, ''); return h === 'hark.com' || h.endsWith('.hark.com'); } catch { return false; } };
 // 用函数延后拼接：PICK_COMPOSER 在文件后面才定义。返回 { busy, rule, seen }：rule 是命中的规则，seen 是输入框附近「正在…」候选的结构快照（给诊断用）
 const stopJs = () => `(() => { ${PICK_COMPOSER}
   const shown = b => { const r = b.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || getComputedStyle(b).visibility === 'hidden') return false;
@@ -315,7 +315,7 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
     for (let a = n; a && a !== document.body && a !== document.documentElement; a = a.parentElement) { if (a.contains(el)) break; if (repeated(a)) return 'in-messages:repeated'; }
     return ''; };
   const rounded = n => { for (let i = 0; n && i < 4; i++, n = n.parentElement) { const cs = getComputedStyle(n); if (parseFloat(cs.borderTopLeftRadius) >= 10 && (parseFloat(cs.borderTopWidth) > 0 || !/rgba\\(0, 0, 0, 0\\)|transparent/.test(cs.backgroundColor))) return true; } return false; };
-  // 诊断快照：祖先链只记结构（标签、role、class 前 60 字、data-* 名、定位、滚动、圆角），不记任何正文；候选本身的短句（≤40 字）保留
+  // 诊断快照：祖先链只记结构（标签、role、class 前 60 字、data-* 名、定位、滚动、圆角），不记任何正文
   const chain = n => { const out = []; for (let a = n; a && a !== document.documentElement && out.length < 30; a = a.parentElement) { const cs = getComputedStyle(a);
     out.push({ tag: a.tagName.toLowerCase(), id: a.id || undefined, role: a.getAttribute('role') || undefined, cls: cls(a).slice(0, 60) || undefined,
       data: [...a.attributes].map(x => x.name).filter(x => x.startsWith('data-')).slice(0, 6), pos: cs.position, oy: cs.overflowY, scroll: scrollBox(a) || undefined, radius: parseFloat(cs.borderTopLeftRadius) || undefined, hasComposer: a.contains(el) || undefined }); }
@@ -330,7 +330,7 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
     if (r.right < box.left || r.left > box.right || r.width > box.width * 0.8) continue;   // 横向落在输入框范围内，且比输入框窄
     if (!shown(p) || String(p.innerText || '').trim().length > 40) continue;
     const skip = inMessages(p) || (rounded(p) ? '' : 'not-rounded');
-    if (seen.length < 3) seen.push({ text: txt, verdict: skip || 'pill', chain: chain(p) });
+    if (seen.length < 3) seen.push({ verdict: skip || 'pill', prefix: skip ? undefined : txt.match(PILL)[0], chain: chain(p) });   // 不记正文：只有判为气泡的才留下命中的固定前缀（如「正在」）
     if (!skip) return { busy: true, rule: 'pill', seen };
   }
   return { busy: false, rule: '', seen }; })()`;
@@ -338,7 +338,7 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
 const lampSeen = new Set();
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
-    if (lampSeen.has(sig) || lampSeen.size >= 40) continue; lampSeen.add(sig); diagAdd({ t: Date.now(), lamp: 'dom', verdict: x.verdict, text: x.text, chain: x.chain }); }
+    if (lampSeen.has(sig) || lampSeen.size >= 40) continue; lampSeen.add(sig); diagAdd({ t: Date.now(), lamp: 'dom', verdict: x.verdict, prefix: x.prefix, chain: x.chain }); }
 }
 function workProbe(wc) {
   if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(false);
