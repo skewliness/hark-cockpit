@@ -316,9 +316,10 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
     return ''; };
   const rounded = n => { for (let i = 0; n && i < 6; i++, n = n.parentElement) { const cs = getComputedStyle(n); if (parseFloat(cs.borderTopLeftRadius) >= 10 && (parseFloat(cs.borderTopWidth) > 0 || !/rgba\\(0, 0, 0, 0\\)|transparent/.test(cs.backgroundColor))) return true; } return false; };
   // 诊断快照：祖先链只记结构（标签、role、class 前 60 字、data-* 名、定位、滚动、圆角），不记任何正文
+  const idOnly = (v, n) => v && v.length <= n && /^[A-Za-z0-9_.:-]+$/.test(v) ? v : (v ? '#' : undefined);   // 只留标识符样式的取值，其余一律记 #
   const chain = n => { const out = []; for (let a = n; a && a !== document.documentElement && out.length < 30; a = a.parentElement) { const cs = getComputedStyle(a);
     out.push({ tag: a.tagName.toLowerCase(), id: a.id || undefined, role: a.getAttribute('role') || undefined, cls: cls(a).slice(0, 60) || undefined,
-      data: [...a.attributes].map(x => x.name).filter(x => x.startsWith('data-')).slice(0, 6), tid: (a.getAttribute('data-testid') || '').slice(0, 40) || undefined, phase: (a.getAttribute('data-phase') || '').slice(0, 20) || undefined, pos: cs.position, oy: cs.overflowY, scroll: scrollBox(a) || undefined, radius: parseFloat(cs.borderTopLeftRadius) || undefined, hasComposer: a.contains(el) || undefined }); }
+      data: [...a.attributes].map(x => x.name).filter(x => x.startsWith('data-')).slice(0, 6), tid: idOnly(a.getAttribute('data-testid'), 40), phase: idOnly(a.getAttribute('data-phase'), 20), pos: cs.position, oy: cs.overflowY, scroll: scrollBox(a) || undefined, radius: parseFloat(cs.borderTopLeftRadius) || undefined, hasComposer: a.contains(el) || undefined }); }
     return out; };
   const seen = [];
   const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -330,10 +331,12 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
     if (r.right < box.left || r.left > box.right || r.width > box.width * 0.8) continue;   // 横向落在输入框范围内，且比输入框窄
     if (!shown(p) || String(p.innerText || '').trim().length > 40) continue;
     // 真实 Hark（2026-10-24 真机诊断）：状态气泡的第 5 层祖先带 data-testid + data-phase，且位于消息滚动区内。带 data-phase 的直接认定
-    let ph = null; for (let a = p, i = 0; a && i < 6 && !ph; a = a.parentElement, i++) if (a.hasAttribute('data-phase') && !a.contains(el)) ph = a;
-    const skip = inMessages(p) || (ph || rounded(p) ? '' : 'not-rounded');
+    // 且 p 与该祖先之间须有一层 absolute + 圆角≥10 的外壳（真机 sx9adt4），普通消息节点即使带 data-phase 也不认
+    let ph = null, shell = false; for (let a = p, i = 0; a && i < 6 && !ph; a = a.parentElement, i++) { if (a.hasAttribute('data-phase') && !a.contains(el)) { ph = shell ? a : null; break; } const cs = getComputedStyle(a); if (cs.position === 'absolute' && parseFloat(cs.borderTopLeftRadius) >= 10) shell = true; }
+    // 1.3.31 起只认真机结构（data-phase + absolute 圆角外壳）；只有圆角底色的记 weak-pill 进诊断，不点灯（解 P1-1 短对话误判）
+    const skip = ph ? '' : inMessages(p) || (rounded(p) ? 'weak-pill' : 'not-rounded');   // 真机签名优先：气泡本就在消息滚动区里（真机诊断）
     if (seen.length < 3) seen.push({ verdict: skip || 'pill', prefix: skip ? undefined : txt.match(PILL)[0], chain: chain(p) });   // 不记正文：只有判为气泡的才留下命中的固定前缀（如「正在」）
-    if (!skip) return { busy: true, rule: ph ? 'pill:phase' : 'pill', seen };
+    if (!skip) return { busy: true, rule: 'pill:phase', seen };
   }
   // 无气泡时：记一次输入框正上方最近的一个文本块的结构（不含正文），用来对照真实消息节点长什么样
   if (!seen.length) { let best = null, bb = -1e9; const tw2 = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let k = 0;
@@ -344,7 +347,7 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
 // 诊断：输入框附近每种「正在…」候选结构记一次（按判定 + 祖先链签名去重，最多 40 条），用户在侧栏导出诊断即可拿到真实 DOM 结构
 const lampSeen = new Set();
 const lampLog = [];   // 状态灯诊断单独存，最多 300 条，不被额度诊断挤掉
-function lampAdd(x) { if (lampLog.length < 300) lampLog.push(x); }
+function lampAdd(x) { lampLog.push(x); if (lampLog.length > 300) lampLog.shift(); }   // 满 300 丢最旧
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
     if (lampSeen.has(sig) || lampSeen.size >= 40) continue; lampSeen.add(sig); lampAdd({ t: Date.now(), lamp: 'dom', verdict: x.verdict, prefix: x.prefix, chain: x.chain }); }
@@ -423,10 +426,10 @@ function parseUsage(obj) {
 // 状态灯流样本（只记事件名、类型字段和字段名，不记正文），最多 200 条
 const lampStreams = new Map(); let lampStreamN = 0, lampStreamCount = 0;
 function lampStreamDiag(x) { if (lampStreamCount++ < 200) lampAdd(x); }
-const lampPath = u => { try { return new URL(u).pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, ':id').replace(/\/\d{4,}/g, '/:n'); } catch { return ''; } };
+const lampPath = u => { try { return new URL(u).pathname.split('/').map(x => !x ? x : /^[a-z][a-z0-9._-]{0,30}$/i.test(x) && !/\d{4,}/.test(x) && !/^[0-9a-f_-]{8,}$/i.test(x) ? x : ':x').join('/'); } catch { return ''; } };
 const lampReq = new Map();   // hark.com 的 Fetch/XHR：记开始时间，结束时若持续 >2 秒（疑似流式回复通道）记一条
 const lampWs = new Set(); let lampWsFrames = 0;
-function evShape(data) { const len = String(data || '').length; try { const o = JSON.parse(data); const kind = o && typeof o === 'object' ? ['type', 'event', 'kind', 't', 'op', 'name'].map(k => typeof o[k] === 'string' ? k + '=' + o[k].slice(0, 40) : '').filter(Boolean).join(' ') : ''; return { len, kind, keys: o && typeof o === 'object' ? Object.keys(o).slice(0, 15) : typeof o }; } catch { return { len, kind: 'non-json' }; } }
+function evShape(data) { const ID_RE = /^[A-Za-z0-9_.:\/-]{1,40}$/; const len = String(data || '').length; try { const o = JSON.parse(data); const kind = o && typeof o === 'object' ? ['type', 'event', 'kind', 't', 'op'].map(k => typeof o[k] === 'string' ? k + '=' + (ID_RE.test(o[k]) ? o[k] : '#') : '').filter(Boolean).join(' ') : ''; return { len, kind, keys: o && typeof o === 'object' ? Object.keys(o).slice(0, 15).map(k => ID_RE.test(k) && k.length <= 30 ? k : '#') : typeof o }; } catch { return { len, kind: 'non-json' }; } }
 const SKIP_HEADERS = /^(cookie|host|content-length|accept-encoding|connection|origin|referer|sec-|user-agent|:)/i;
 function watchUsage(acc, wc) {
   try { wc.debugger.attach('1.3'); } catch { return; }
