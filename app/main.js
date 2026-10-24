@@ -355,7 +355,8 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
 // 诊断：输入框附近每种「正在…」候选结构记一次（按判定 + 祖先链签名去重，最多 40 条），用户在侧栏导出诊断即可拿到真实 DOM 结构
 const lampSeen = new Set();
 const lampLog = [];   // 状态灯诊断单独存，最多 300 条，不被额度诊断挤掉
-const LAMP_QUOTA = { dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
+const lampProbeLast = new Map();
+const LAMP_QUOTA = { probe: 300, light: 200, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
 function lampAdd(x) { lampLog.push(x); const k = x.lamp, q = LAMP_QUOTA[k] || 40; let n = 0; for (const y of lampLog) if (y.lamp === k) n++; if (n > q) lampLog.splice(lampLog.findIndex(y => y.lamp === k), 1); }   // 按类别配额，各类满了丢本类最旧，保留新到样本
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
@@ -363,7 +364,7 @@ function lampDiag(seen) {
 }
 function workProbe(wc) {
   if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(false);
-  return Promise.race([wc.executeJavaScript(stopJs(), false).then(v => { if (v && v.seen) lampDiag(v.seen); return !!(v && v.busy); }, () => false), new Promise(r => setTimeout(() => r(false), 1500))]);
+  return Promise.race([wc.executeJavaScript(stopJs(), false).then(v => { if (v && v.seen) lampDiag(v.seen); return v && v.busy ? (v.rule || 'busy') : false; }, () => false), new Promise(r => setTimeout(() => r(false), 1500))]);   // 命中时返回规则名
 }
 let workTicking = false;
 async function workTick() {
@@ -375,9 +376,12 @@ async function workTick() {
       const w = workOf(a.id);
       if (!loginState[a.id]) { if (w.working) { w.working = false; changed = true; } return; }
       const hits = await Promise.all([views.get(a.id), inboxViews.get(a.id)].map(v => workProbe(v?.webContents)));
+      // 运行周期诊断：每个窗口的主视图 / 收信视图，探针结果（命中规则或空闲）变化时记一条；灯亮灭变化时记一条。只记序号、规则名、时间，不含正文
+      const ai = accounts.indexOf(a);
+      hits.forEach((h, k) => { const key = a.id + ':' + k, val = h || ''; if (lampProbeLast.get(key) !== val) { lampProbeLast.set(key, val); lampAdd({ t: now, lamp: 'probe', acc: ai, view: k ? 'inbox' : 'main', busy: !!h, rule: h || undefined }); } });
       if (hits.some(Boolean)) w.busyAt = Date.now();
       const on = !!w.busyAt && Date.now() - w.busyAt < WORK_IDLE_MS;
-      if (on !== w.working) { w.working = on; changed = true; }
+      if (on !== w.working) { w.working = on; changed = true; lampAdd({ t: now, lamp: 'light', acc: ai, on }); }
     }));
     for (const id of Object.keys(work)) if (!accounts.some(a => a.id === id)) delete work[id];
     if (changed) pushState();
