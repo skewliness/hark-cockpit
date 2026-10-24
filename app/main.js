@@ -170,7 +170,7 @@ async function refreshStatus() {
     } catch { loginState[a.id] = false; }
   }));
 }
-function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], working: isWorking(a.id), usage: usage[a.id] || null, kind: 'hark' })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], working: isWorking(a.id), usage: usage[a.id] || null, kind: 'hark', bellWait: bellWait(a.id) })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
 let pushT;
 function pushState() {
   clearTimeout(pushT);
@@ -718,18 +718,71 @@ const PICK_COMPOSER = `const vis = e => { const r = e.getBoundingClientRect(); r
   const el = cands.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0]
     || [...document.querySelectorAll(sel)].filter(e => !e.disabled && !e.readOnly).pop();
   const hasText = e => !!String(e.value ?? e.innerText ?? e.textContent ?? '').replace(/[\\u200b-\\u200d\\u2060\\ufeff\\s]/g, '');`;
-const COMPOSER_BUSY_JS = `(() => { ${PICK_COMPOSER}
-  return !!el && hasText(el); })()`;
-const COMPOSER_JS = text => `(async () => {
+// M3：认得自己的残留。key = 去零宽、空白折叠后的文字；记前 40 字 + hashOf（与 main 进程的 hashOf 同一算法）
+// last = 这个账号最近 3 次写入的 [{head,hash}]，命中任意一条就算我们自己的（A 卡在框里、B 又没写进去时也认得 A）
+const RESIDUE_JS = last => `const LAST = ${JSON.stringify(Array.isArray(last) ? last : last ? [last] : [])};
+  const normK = s => String(s).replace(/[\\u200b-\\u200d\\u2060\\ufeff]/g, '').replace(/\\s+/g, ' ').trim();
+  const hashK = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + s.length.toString(36); };
+  const curText = () => String(el.value ?? el.innerText ?? el.textContent ?? '');
+  // P1-1 / P1-5：只认最近 3 次写入——全文一致（head+hash），或是它被截断后剩下的开头（#20，至少 8 个字）。
+  //       唯一的格式兜底：整框只有一行，且是门铃首行「📨 你有 N 封新信（收件地址 xxx）[，其中 N 封已附全文]」本身或它被截断后的开头
+  //       （那是被截断、又不在最近 3 条里的旧门铃首行）。多一行、多一个字不合格式，都按用户草稿处理，一字不动。
+  const isBellHead = k => { if (/\\n/.test(k)) return false; const m = /^📨 你有 \\d+ 封新信（收件地址 [\\w.@-]*(.*)$/.exec(k); if (!m) return false;
+    const tail = m[1].replace(/\\d+/, '9'); return '），其中 9 封已附全文'.startsWith(tail); };
+  const isOurs = s => { const k = normK(s); if (!k) return false;
+    const h = k.slice(0, 40), x = hashK(k);
+    if (LAST.some(l => l && l.head === h && l.hash === x)) return true;
+    if (k.length >= 8 && LAST.some(l => l && (l.text ? l.text.startsWith(k) : (k.length <= 40 && String(l.head || '').startsWith(k))))) return true;
+    return isBellHead(String(s).replace(/[\\u200b-\\u200d\\u2060\\ufeff]/g, '').trim().replace(/[ \\t]+/g, ' ')); };`;
+function residueKey(text) { const k = String(text).replace(/[\u200b-\u200d\u2060\ufeff]/g, '').replace(/\s+/g, ' ').trim(); return { head: k.slice(0, 40), hash: hashOf(k), text: k }; }   // text：认截断残留用（#20）
+const LAST_WRITES = 3;
+// 这个账号最近写入过的文字（兼容 1.3.35 早期草稿存的单个对象）
+function lastWrites(accId) { mail.lastWrite = mail.lastWrite || {}; const v = mail.lastWrite[accId]; return Array.isArray(v) ? v : v ? [v] : []; }
+function noteWrite(accId, text) { const k = residueKey(text); mail.lastWrite[accId] = [...lastWrites(accId).filter(x => x.hash !== k.hash), k].slice(-LAST_WRITES); }
+function forgetWrite(accId, text) { const k = residueKey(text); const l = lastWrites(accId).filter(x => x.hash !== k.hash); if (l.length) mail.lastWrite[accId] = l; else delete mail.lastWrite[accId]; }
+// 对方正在生成：输入框所在表单里出现可见的停止按钮（S6：真实文案待 QUTN 实测后收窄）
+// #19：和灯模块同一判法——整个标签就是「停止 / Stop …」，且不是录音 / 朗读 / 语音的停止
+const STOP_JS = `[...(el.closest('form') || el.parentElement?.parentElement?.parentElement || document).querySelectorAll('button,[role="button"]')].some(b => { if (!vis(b) || b.disabled) return false;
+    const l = String(b.getAttribute('aria-label') || b.title || (String(b.innerText || '').length <= 16 ? b.innerText : '')).trim().replace(/\\s+/g, ' ');
+    return /^(stop|stop generating|stop response|stop responding|interrupt|cancel response|停止|停止生成|停止回复|停止回答|中断|中止|取消生成)$/i.test(l) && !/录音|录制|语音|麦克风|听写|朗读|recording|record|dictation|voice|mic|audio|read aloud|speak/i.test(l); })`;
+// 有附件时投递前先查：'busy' = 真有用户草稿；我们自己的残留不算（投递时会被整段替换）
+// 返回 true = 用户草稿；'agent-busy' = 对方正在生成（先别上传附件）；false = 可以上传
+const COMPOSER_BUSY_JS = last => `(() => { ${PICK_COMPOSER}
+  if (el && ${STOP_JS}) return 'agent-busy';
+  if (!el || !hasText(el)) return false;
+  ${RESIDUE_JS(last)}
+  return !isOurs(curText()); })()`;
+// 返回：'sent' 框已清空=真发出 | 'agent-busy' 对方 agent 在生成，没写入或已把我们写的撤回，稍后重试、不计失败
+//       | 'busy' 框里是用户自己的草稿，不动它 | 'no-composer'
+const COMPOSER_JS = (text, last) => `(async () => {
   // Hark 多为 textarea；也兼容 contenteditable。优先可见的 textbox / contenteditable，再退回 textarea
   ${PICK_COMPOSER}
   if (!el) return 'no-composer';
-  // 输入框里已有没发出去的内容（用户草稿或上一封没发成功的信）：不追加，稍后重试——否则几封说明会粘成一条重复发出
-  if (hasText(el)) return 'busy';
+  ${RESIDUE_JS(last)}
+  const root = el.closest('form') || el.parentElement?.parentElement?.parentElement || document;
+  const label = b => ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.innerText || '')).trim();
+  const findSend = () => { const btns = [...root.querySelectorAll('button,[role="button"]')].filter(b => vis(b));
+    return btns.find(b => b.type === 'submit') || btns.find(b => /^send$/i.test(label(b))) || btns.find(b => /send|发送|submit/i.test(label(b))); };
+  const isStop = () => ${STOP_JS};
+  // M1：先判断再写——对方正在生成（出现停止按钮）就不碰输入框
+  if (isStop()) return 'agent-busy';
+  const fire = () => el.dispatchEvent(new Event('input', { bubbles: true }));
+  const setVal = v => { const P = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(P, 'value').set.call(el, v); fire(); };
+  const isField = el.tagName === 'TEXTAREA' || el.tagName === 'INPUT';
+  const clearAll = () => { el.focus();
+    if (isField) setVal('');
+    else { try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch {}
+      if (normK(curText())) { el.textContent = ''; el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); } }
+    return !normK(curText()); };
+  if (hasText(el)) {
+    // M3：框里是我们自己留下的门铃/上一封信的残留 → 整段替换成这封（这封已合并了待发的信）；M4：别的内容是用户草稿，不覆盖不追加
+    if (!isOurs(curText())) return 'busy';
+    if (!clearAll()) return 'busy';
+  }
   el.focus();
   const text = ${JSON.stringify(text)};
   let ok = false; try { ok = document.execCommand('insertText', false, text); } catch {}
-  const got = () => String(el.value ?? el.innerText ?? el.textContent ?? '');
+  const got = curText;
   if (!ok || !got().includes(text.slice(0, Math.min(20, text.length)))) {
     if (el.tagName === 'TEXTAREA') { const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; set.call(el, text); el.dispatchEvent(new Event('input', { bubbles: true })); }
     else {
@@ -741,51 +794,105 @@ const COMPOSER_JS = text => `(async () => {
       }
     }
   }
-  const root = el.closest('form') || el.parentElement?.parentElement?.parentElement || document;
-  const findSend = () => { const btns = [...root.querySelectorAll('button,[role="button"]')].filter(b => vis(b));
-    const label = b => ((b.getAttribute('aria-label') || '') + ' ' + (b.title || '') + ' ' + (b.innerText || '')).trim();
-    return btns.find(b => b.type === 'submit') || btns.find(b => /^send$/i.test(label(b))) || btns.find(b => /send|发送|submit/i.test(label(b))); };
-  for (let i = 0; i < 100; i++) { await new Promise(r => setTimeout(r, 400)); const b = findSend(); if (b && !b.disabled && b.getAttribute('aria-disabled') !== 'true') { b.click(); return 'sent'; } if (!b && i > 2) break; }
-  const kd = o => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, ...o }));
-  kd({}); return 'enter';
+  // M2：写入后确认——不管是点了发送还是补了 Enter，框里没有我们的字才算 sent；还在就只撤回我们写的那段，按 agent-busy 重排
+  const mine = normK(text);
+  const ourStill = () => { const now = normK(curText()); return !!now && now.includes(mine.slice(0, Math.min(40, mine.length))); };
+  // 撤回我们写的那段：整框都是我们的就清空，否则按位置切掉，用户别的字不动
+  const withdraw = () => {
+    if (!ourStill()) return 'sent';             // F3'：框里已没有我们的字 = 页面已发出，别当忙重投
+    const now = normK(curText());
+    if (now === mine) clearAll();
+    else if (isField) { const v = String(el.value); const i = v.indexOf(text); if (i >= 0) setVal(v.slice(0, i) + v.slice(i + text.length)); else clearAll(); }
+    else { const t = String(el.textContent); const i = t.indexOf(text); if (i >= 0) { el.textContent = t.slice(0, i) + t.slice(i + text.length); el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); } else clearAll(); }
+    return 'agent-busy';
+  };
+  // P1-2 / #22：点了发送 / 按了 Enter 后最多等 30 秒，期间框一空就算 sent（有的页面收下后 2 秒、甚至 10 秒多才清框）；30 秒还在才撤回
+  const confirm = async () => { for (let t = 0; t < 120; t++) { await new Promise(r => setTimeout(r, 250)); if (!ourStill()) return 'sent'; } return withdraw(); };
+  const enabled = b => b && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
+  let b = null;
+  for (let i = 0; i < 100; i++) {
+    await new Promise(r => setTimeout(r, 400));
+    if (isStop()) return withdraw();          // F3：写入后才开始生成——撤回，不按 Enter（有的界面会当成打断/插队）
+    b = findSend(); if (enabled(b)) { b.click(); return await confirm(); }
+    if (!b && i > 2) break;
+  }
+  if (b) return withdraw();                   // 有发送按钮但一直不可用：按忙处理，撤回重排
+  // 页面上根本没有发送按钮：只能补 Enter
+  el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+  return await confirm();
 })()`;
 let delivering = false;
+const AGENT_BUSY_RETRY_MS = 10000;      // 对方生成中：10 秒后再看（另有 15 秒的全局补投定时器）
+const DRAFT_HINT_MS = 10 * 60 * 1000;  // 草稿挡住门铃超过这么久，侧栏挂提示
+const AGENT_BUSY_HINT_MS = 30 * 60 * 1000;   // S1：一直判忙超过这么久（红灯卡住等），侧栏挂提示
+const inflight = new Set();            // F1：deliverQueue 正在投的信（只在内存里，重启自然清空），合并时不碰它们
+// 侧栏提示：这个账号有门铃被草稿挡住超过 10 分钟 / 一直判忙超过 30 分钟；没有就返回 ''
+function bellWait(accId) {
+  const now = Date.now(), q = mail.letters.filter(x => x.to === accId && x.status === 'queued');
+  if (q.some(x => x.busySince && now - x.busySince >= DRAFT_HINT_MS)) return '输入框有草稿，门铃在等';
+  if (q.some(x => x.agentBusySince && now - x.agentBusySince >= AGENT_BUSY_HINT_MS)) return '窗口一直在忙，门铃在等';
+  return '';
+}
 async function deliverQueue() {
   if (delivering) return; delivering = true;
   try {
     for (const L of mail.letters.filter(x => x.status === 'queued' && !(x.retryAt > Date.now()))) {
+      if (L.status !== 'queued') continue;   // M5：遍历期间可能已被新门铃顶替（merged）
+      inflight.add(L.id);
+      try {
       const acc = accounts.find(a => a.id === L.to);
       if (!acc) { L.status = 'failed'; L.note = '收件窗口已删除'; continue; }
       const wc = deliveryWc(acc);
       let r = 'no-composer';
       if (!isCollabAccount(acc)) { L.status = 'failed'; L.note = '该窗口不参与信箱协同'; continue; }
-      if ((L.files || []).length) {
+      mail.lastWrite = mail.lastWrite || {};
+      // M1：对方 agent 正在生成（侧栏红灯）就不写入、不上传，稍后重试，不计失败
+      if (isWorking(acc.id)) r = 'agent-busy';
+      // P1-3：附件只在「这一页」上传过才算数——页面重载后标记消失，要重新上传
+      if ((L.files || []).length && L.filesUp && r === 'no-composer') { let here = false; try { here = await wc.executeJavaScript(`(() => window.__harkFilesUp === ${JSON.stringify(L.id)})()`, true); } catch {} if (here !== true) L.filesUp = false; }
+      if ((L.files || []).length && !L.filesUp && r === 'no-composer') {
         for (let i = 0; i < 12 && !(!wc.isLoading() && collabUrlOk(wc.getURL())); i++) await new Promise(res => setTimeout(res, 2500));
-        let busy = false; try { busy = await wc.executeJavaScript(COMPOSER_BUSY_JS, true); } catch {}
-        if (busy === true) r = 'busy';   // 先查输入框再上传附件，免得重试时重复上传
+        let busy = false; try { busy = await wc.executeJavaScript(COMPOSER_BUSY_JS(lastWrites(acc.id)), true); } catch {}
+        if (busy === 'agent-busy') r = 'agent-busy';   // S2：对方在生成就先不上传，免得附件留在框里
+        else if (busy === true) r = 'busy';   // 先查输入框再上传附件，免得重试时重复上传
+        else {
+          const up = await uploadFiles(wc, L.files.map(f => f.path));
+          if (!up) L.note = '附件没能上传（没找到上传入口）'; else { L.filesUp = true; try { await wc.executeJavaScript(`(() => { window.__harkFilesUp = ${JSON.stringify(L.id)}; return true; })()`, true); } catch {} }   // 已上传：agent-busy 重排时附件还在框里，不重复上传
+        }
       }
-      if ((L.files || []).length && r !== 'busy') {
-        const up = await uploadFiles(wc, L.files.map(f => f.path));
-        if (!up) L.note = '附件没能上传（没找到上传入口）';
-      }
-      for (let i = 0; i < 24 && r === 'no-composer'; i++) {   // r==='busy' 时不进循环
-        if (!wc.isLoading() && collabUrlOk(wc.getURL())) { try { r = await wc.executeJavaScript(COMPOSER_JS(L.teach ? protocolText(acc) : (L.raw || letterText(L))), true); } catch { r = 'no-composer'; } }
+      for (let i = 0; i < 24 && r === 'no-composer'; i++) {   // r 为 busy / agent-busy 时不进循环
+        if (!wc.isLoading() && collabUrlOk(wc.getURL())) {
+          const text = L.teach ? protocolText(acc) : (L.raw || letterText(L));
+          const last = lastWrites(acc.id);   // F2：每轮现读——上一轮可能已写进框后抛异常，这轮要认得它
+          noteWrite(acc.id, text); mailSave();   // M3：先记下要写的文字（最近 3 条），写进去后万一卡住，下次认得是自己的
+          try { r = await wc.executeJavaScript(COMPOSER_JS(text, last), true); } catch { r = 'no-composer'; }
+          if (r === 'sent') { forgetWrite(acc.id, text); mailSave(); }
+        }
         if (r === 'no-composer') await new Promise(res => setTimeout(res, 2500));
       }
-      if (r === 'busy') {
-        L.busyTries = (L.busyTries || 0) + 1;
-        if (L.busyTries >= 40) { L.status = 'failed'; L.note = '收件窗口输入框一直有未发送内容'; toast(`信箱：投递给 ${acc.name} 失败——输入框里一直有未发送内容，清空后在概览点重试`); }
-        else { L.note = '收件窗口输入框里有未发送内容，稍后重试'; L.retryAt = Date.now() + 30000; }
+      if (r === 'agent-busy') {
+        delete L.busySince; if (!L.agentBusySince) L.agentBusySince = Date.now();
+        L.note = '收件窗口正在干活，忙完自动送达'; L.retryAt = Date.now() + AGENT_BUSY_RETRY_MS;
         mailSave(); pushState(); continue;
       }
+      if (r === 'busy') {
+        // M4：真有用户草稿——不覆盖、不追加、没有失败上限，一直等；超过 10 分钟只在侧栏这个账号上挂小提示，不弹 toast
+        L.busyTries = (L.busyTries || 0) + 1;
+        if (!L.busySince) L.busySince = Date.now(); delete L.agentBusySince;
+        L.note = '收件窗口输入框有草稿，门铃在等'; L.retryAt = Date.now() + 30000;
+        mailSave(); pushState(); continue;
+      }
+      delete L.busySince; delete L.agentBusySince;
+      if (L.status === 'merged') { mailSave(); pushState(); continue; }   // F1 兜底：已被顶替就不再改状态
       if (r === 'no-composer') {
-        L.status = 'failed';
+        L.status = 'failed'; delete L.filesUp;   // P1-3：没送达，重试时附件要重新上传
         L.note = !loginState[acc.id] ? '收件窗口未登录' : '没找到输入框';
         if (L.teach && L.auto && mail.taught && !(mail.siteReg && mail.siteReg[acc.id])) { mail.teachFail = mail.teachFail || {}; const f = mail.teachFail[acc.id] = (mail.teachFail[acc.id] || 0) + 1; if (f < 3) { delete mail.taught[acc.id]; if (mail.siteTaught) delete mail.siteTaught[acc.id]; } }
       }
       else { L.status = 'sent'; L.sentAt = Date.now(); if (L.teach && mail.teachFail) delete mail.teachFail[acc.id]; if (L.bookHash) { mail.bookSeen = mail.bookSeen || {}; mail.bookSeen[acc.id] = L.bookHash; } toast(`信箱：${L.fromName} → ${acc.name}${L.subject ? '「' + L.subject + '」' : ''}`); }
       mailSave(); pushState();
       await new Promise(res => setTimeout(res, 1500));
+      } finally { inflight.delete(L.id); }
     }
   } finally { delivering = false; }
 }
@@ -848,7 +955,7 @@ function protocolText(acc) {
   return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，每个窗口有唯一的信箱地址，你是 Hark，地址是 ${mailAddr(acc)}。通讯录：\n${directory(acc)}\n\n当我让你去和另一个窗口讨论，或你需要别的窗口配合时，用写信的方式联系它：把信放进一个代码块发出，格式如下——\n\n[[MAIL to=对方的信箱地址，例如 #ABCD]]\n主题: 一句话主题\n${PLACEHOLDER}（文字、方案、代码都可以直接写在这里）\n[[/MAIL]]\n\nHark Tools 会自动把信送到对方窗口，对方也会用同样的格式回信给你。一封信一个代码块；正文里如果要放代码，直接写，不要再嵌套代码块。内容很长（大段代码、整个文件、多个文件）时，别塞进正文：把它存成文件（txt、md、源码文件、zip 压缩包等任意格式都行），作为附件放在写信的同一条回复里，并在信里加一行「附件: 文件名1, 文件名2」，Hark Tools 会把文件一起送过去。收件人写信箱地址（窗口改名或调顺序时地址不变），也可以写窗口名；不支持按编号寻址。你的身份由 Hark Tools 按发信窗口自动标注，不用自己署名。新窗口加入时，你收到的来信末尾会附最新通讯录。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」，不用写信。`;
 }
 ipcMain.handle('mailPause', (_e, on) => { mail.paused = !!on; if (!on) mail.letters.filter(x => x.status === 'held').forEach(x => { x.status = 'queued'; x.note = ''; }); mailSave(); pushState(); deliverQueue(); });
-ipcMain.handle('mailRetry', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.to) { L.status = 'queued'; L.note = ''; L.at = Date.now(); delete L.retryAt; delete L.busyTries; mailSave(); pushState(); deliverQueue(); } });
+ipcMain.handle('mailRetry', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.to) { L.status = 'queued'; L.note = ''; L.at = Date.now(); delete L.retryAt; delete L.busyTries; delete L.filesUp; mailSave(); pushState(); deliverQueue(); } });
 ipcMain.handle('mailClear', () => { mail.letters = mail.letters.filter(x => x.status === 'queued'); mailSave(); pushState(); });
 // 发说明（TSMS 裁定）：
 // - 带 id（侧栏右键「发说明」）：只发这一个窗口，并撤销它的「已注册」推断（siteReg/reteachKey/teachFail），重新给 30 分钟宽限期——这是唯一会清这些状态的路径
@@ -1579,9 +1686,29 @@ function siteFlushAcc(accId) {
   mail.siteLastBellAt[accId] = now;
   if (extOnly) mail.siteExtOnlyAt[accId] = now;
   const dropped = mail.siteDropped[accId] || 0; delete mail.siteDropped[accId];
-  const raw = siteBellText(a, still, dropped, extE.map(e => e.msg.id));
-  const ms = still.length ? still.map(x => x.msg) : extE.map(e => ({ ...e.msg, title: '未登记地址来信' }));
-  mail.letters.push({ id: 'b' + now.toString(36) + Math.random().toString(36).slice(2, 6) + accId.slice(-3), at: now, from: null, fromName: extOnly ? `${ms.length} 封未登记地址来信` : ms.length === 1 ? cleanAddr(ms[0].from) : `${ms.length} 封网站来信`, to: accId, toName: a.name, subject: extOnly ? '未登记地址来信（未内嵌）' : ms.length === 1 ? (cleanLine(ms[0].title, 60) || '网站来信') : ms.map(m => cleanLine(m.title, 30) || cleanAddr(m.from)).join('；').slice(0, 60), body: raw, raw, status: 'queued', note: '', site: true, bookHash: siteBellText.lastBookHash });
+  // M5：同一窗口同时只投一封门铃——还没投出去的旧门铃作废，它的信并进这封（旧的在前，按内嵌总量重新分配全文）
+  const bellId = 'b' + now.toString(36) + Math.random().toString(36).slice(2, 6) + accId.slice(-3);
+  const slim = m => ({ id: m.id, seq: m.seq, from: m.from, title: m.title, bytes: m.bytes });
+  let items = still.map(x => ({ msg: slim(x.msg), text: x.text, epoch: x.epoch })), extIds = extE.map(e => e.msg.id), drop = dropped, busySince, agentBusySince;
+  const olds = mail.letters.filter(x => x.site && x.to === accId && x.status === 'queued' && Array.isArray(x.bellItems) && !x.filesUp && !inflight.has(x.id));   // F1：正在投的不动
+  if (olds.length) {
+    const seen = new Set(), seenX = new Set();
+    items = [...olds.flatMap(o => o.bellItems), ...items].filter(x => !seen.has(x.msg.id) && seen.add(x.msg.id));
+    extIds = [...olds.flatMap(o => o.bellExt || []), ...extIds].filter(id => !seen.has(id) && !seenX.has(id) && seenX.add(id));
+    drop += olds.reduce((n, o) => n + (o.bellDropped || 0), 0);
+    // S4：内嵌额度从新往旧分配，新信不被旧信挤成只剩标题
+    let left = EMBED_TOTAL_CHARS;
+    items = items.slice().reverse().map(x => { if (x.text == null) return x; if (x.text.length <= left) { left -= x.text.length; return x; } return { ...x, text: null }; }).reverse();
+    const bs = olds.map(o => o.busySince).filter(Boolean); if (bs.length) busySince = Math.min(...bs);   // 草稿等待时长接着算
+    const ab = olds.map(o => o.agentBusySince).filter(Boolean); if (ab.length) agentBusySince = Math.min(...ab);   // S7：一直忙的时长也接着算
+  }
+  const raw = items.length || extIds.length ? siteBellText(a, items, drop, extIds) : null;
+  // S5：新门铃生成成功后才让旧的作废
+  for (const o of olds) { o.status = 'merged'; o.note = '已并入较新的一封门铃'; o.mergedInto = bellId; delete o.retryAt; }
+  if (raw == null) { mailSave(); pushState(); return; }
+  const exOnly = !items.length;
+  const ms = items.length ? items.map(x => x.msg) : extIds.map(id => ({ id, title: '未登记地址来信' }));
+  mail.letters.push({ id: bellId, at: now, from: null, fromName: exOnly ? `${ms.length} 封未登记地址来信` : ms.length === 1 ? cleanAddr(ms[0].from) : `${ms.length} 封网站来信`, to: accId, toName: a.name, subject: exOnly ? '未登记地址来信（未内嵌）' : ms.length === 1 ? (cleanLine(ms[0].title, 60) || '网站来信') : ms.map(m => cleanLine(m.title, 30) || cleanAddr(m.from)).join('；').slice(0, 60), body: raw, raw, status: 'queued', note: '', site: true, bookHash: siteBellText.lastBookHash, bellItems: items, bellExt: extIds, bellDropped: drop, ...(busySince ? { busySince } : {}), ...(agentBusySince ? { agentBusySince } : {}) });
   mailSave(); pushState(); deliverQueue();   // 出队、登记、入 letters 同一次保存
 }
 
@@ -1677,5 +1804,6 @@ async function sitePoll() {
   siteBurst = 0; siteFullPage = false;
   siteFlush().catch(() => {});
 }
-app.whenReady().then(() => { setInterval(() => { if (mail.letters.some(x => x.status === 'queued' && x.retryAt)) deliverQueue().catch(() => {}); }, 15000); });
+// P1-4：没有 retryAt 的待投信也要补投——合并出的新门铃入队时若投递循环正忙（本轮已选好要投的信），最迟 15 秒后由这里接上
+app.whenReady().then(() => { setInterval(() => { if (mail.letters.some(x => x.status === 'queued')) { deliverQueue().catch(() => {}); pushState(); } }, 15000); });
 app.whenReady().then(() => { setTimeout(() => sitePoll().catch(() => {}), 4000); setInterval(() => { sitePoll().catch(() => {}); }, 5000); setInterval(() => { siteFlush().catch(() => {}); }, 1000); });

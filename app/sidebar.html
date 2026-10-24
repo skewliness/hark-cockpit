@@ -27,7 +27,7 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
 .tag{flex:none;font-size:10.5px;line-height:16px;padding:0 6px;border-radius:5px;background:rgba(201,164,92,.16);color:var(--brass);white-space:nowrap}
 .st.ok{color:var(--jade)}.st.busy{color:var(--rust)}
 .st .lamp{width:6px;height:6px}
-.st .q{margin-left:auto;display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--jade)}.bat{position:relative;width:22px;height:11px;border:1.2px solid currentColor;border-radius:3.5px;box-sizing:border-box;opacity:.85}.bat::after{content:'';position:absolute;right:-3.5px;top:3px;width:2px;height:3px;border-radius:0 1px 1px 0;background:currentColor}.bat i{position:absolute;left:1px;top:1px;bottom:1px;border-radius:1.5px;background:currentColor;min-width:1.5px}.st .q.mid{color:var(--brass)}.st .q.low{color:var(--rust)}
+.st .q{margin-left:auto;display:inline-flex;align-items:center;gap:5px;flex:none;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--jade)}.bat{position:relative;width:22px;height:11px;border:1.2px solid currentColor;border-radius:3.5px;box-sizing:border-box;opacity:.85}.bat::after{content:'';position:absolute;right:-3.5px;top:3px;width:2px;height:3px;border-radius:0 1px 1px 0;background:currentColor}.bat i{position:absolute;left:1px;top:1px;bottom:1px;border-radius:1.5px;background:currentColor;min-width:1.5px}.st .q.mid{color:var(--brass)}.st .q.low{color:var(--rust)}.bw{font-size:10.5px;line-height:1.3;color:var(--brass);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
 .key{font-size:11px;color:var(--dim)}
 .acc:hover .key,.acc.on .key{color:var(--haze)}
 .foot{padding:12px;border-top:1px solid #161C21}
@@ -113,7 +113,7 @@ function render(){
   viewAccounts().forEach((a,i)=>{
     const [bg,fg]=tint(a.name);const el=document.createElement('button');
     el.className='acc'+(!st.showHome&&a.id===st.activeId?' on':'');
-    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><div class="nm"><b></b>${a.inboxUrl?'<span class="tag" title="来信投到项目">项目</span>':''}</div><div class="st ${ws(a).c}"><span class="lamp ${ws(a).l}"></span><span>${ws(a).t}</span>${daily(a)}</div></div>`;
+    el.innerHTML=`<div class="mono-av" style="background:${bg};color:${fg}"></div><div class="meta"><div class="nm"><b></b>${a.inboxUrl?'<span class="tag" title="来信投到项目">项目</span>':''}</div><div class="st ${ws(a).c}"><span class="lamp ${ws(a).l}"></span><span>${ws(a).t}</span>${daily(a)}</div>${a.bellWait?'<div class="bw" title="门铃还没送达；输入框空出来、窗口忙完后会自动送达">'+a.bellWait+'</div>':''}</div>`;
     el.querySelector('.mono-av').textContent=(a.name||'H').trim()[0].toUpperCase();el.querySelector('b').textContent=a.name;
     el.dataset.id=a.id;
     el.onclick=e=>{if(editMode||Date.now()<suppressClick){e.preventDefault();return;}cockpit.switchTo(a.id);};
