@@ -367,7 +367,8 @@ function workProbe(wc) {
   return Promise.race([wc.executeJavaScript(stopJs(), false).then(v => { if (v && v.seen) lampDiag(v.seen); return v && v.busy ? (v.rule || 'busy') : false; }, () => false), new Promise(r => setTimeout(() => r(false), 1500))]);   // 命中时返回规则名
 }
 // 独立的回复完成标志（只给诊断用，不参与点灯）：数最后一条 message-bubble 的字数和气泡条数，和状态灯探针不同源。只回两个数字，不含正文
-const replyJs = `(() => { const b = document.querySelectorAll('[data-testid="message-bubble"]'); const l = b[b.length - 1]; return { n: b.length, len: l ? String(l.innerText || '').length : 0 }; })()`;
+// u：最后一个气泡是否用户本人发的（布尔；判不出就不带）。先看 data-message-author-role，没有再看气泡在对话列里偏右（用户）还是偏左（回复）。不含正文
+const replyJs = `(() => { const b = document.querySelectorAll('[data-testid="message-bubble"]'); const l = b[b.length - 1]; let u; if (l) { const r = l.closest('[data-message-author-role]') || l.querySelector('[data-message-author-role]'); if (r) u = r.getAttribute('data-message-author-role') === 'user'; else { const c = l.closest('[role="log"],[role="feed"]') || (l.parentElement && l.parentElement.parentElement) || l.parentElement; if (c) { const lr = l.getBoundingClientRect(), cr = c.getBoundingClientRect(); if (lr.width > 0 && cr.width > 0 && lr.width < cr.width * 0.9) { const ml = lr.left - cr.left, mr = cr.right - lr.right; u = ml > mr + 24 ? true : mr > ml + 24 ? false : undefined; } } } } return { n: b.length, len: l ? String(l.innerText || '').length : 0, u }; })()`;
 const REPLY_STABLE_MS = 5000;
 const replyLast = new Map();   // key -> { sig, at, state }
 function replyProbe(wc) {
@@ -376,10 +377,10 @@ function replyProbe(wc) {
 }
 // 回复字数/条数变化记 growing；连续 ≥5s 不变记 stable，at = 最后一次变化的时刻（即独立的「回复结束」时刻）
 function replyDiag(key, ai, view, v, now) {
-  if (!v) return; const sig = v.n + ':' + v.len, r = replyLast.get(key);
-  if (!r) { replyLast.set(key, { sig, at: now, state: 'stable' }); lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'stable', at: now, n: v.n }); return; }
-  if (r.sig !== sig) { r.sig = sig; r.at = now; if (r.state !== 'growing') { r.state = 'growing'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'growing', n: v.n }); } return; }
-  if (r.state === 'growing' && now - r.at >= REPLY_STABLE_MS) { r.state = 'stable'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'stable', at: r.at, n: v.n }); }
+  if (!v) return; const sig = v.n + ':' + v.len + ':' + v.u, r = replyLast.get(key);
+  if (!r) { replyLast.set(key, { sig, at: now, state: 'stable' }); lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'stable', at: now, n: v.n, u: v.u }); return; }
+  if (r.sig !== sig) { r.sig = sig; r.at = now; if (r.state !== 'growing') { r.state = 'growing'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'growing', n: v.n, u: v.u }); } return; }
+  if (r.state === 'growing' && now - r.at >= REPLY_STABLE_MS) { r.state = 'stable'; lampAdd({ t: now, lamp: 'reply', acc: ai, view, state: 'stable', at: r.at, n: v.n, u: v.u }); }
 }
 const tickStat = { last: 0, n: 0, skipped: 0, maxGapMs: 0, maxProbeMs: 0 };
 const replyPending = new Set();   // 回复诊断探针在飞的视图，避免慢页面上堆积
