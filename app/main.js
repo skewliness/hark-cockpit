@@ -170,7 +170,7 @@ async function refreshStatus() {
     } catch { loginState[a.id] = false; }
   }));
 }
-function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], working: isWorking(a.id), usage: usage[a.id] || null, kind: 'hark', bellWait: bellWait(a.id) })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], working: isWorking(a.id), usage: usage[a.id] || null, quota: quotaOf(a), kind: 'hark', bellWait: bellWait(a.id) })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
 let pushT;
 function pushState() {
   clearTimeout(pushT);
@@ -757,6 +757,8 @@ const COMPOSER_BUSY_JS = last => `(() => { ${PICK_COMPOSER}
   return !isOurs(curText()); })()`;
 // 返回：'sent' 框已清空=真发出 | 'agent-busy' 对方 agent 在生成，没写入或已把我们写的撤回，稍后重试、不计失败
 //       | 'busy' 框里是用户自己的草稿，不动它 | 'no-composer'
+// 门铃尾行「你现在（今日/本期/本周/本月剩 …）」：上限 key 去尾行用；合并时请让 bellQuotaFresh 也改用 QUOTA_TAIL_SRC（YQEE rc8 P2-1，同一口径）
+const QUOTA_TAIL_SRC = '(^|\\n)(你现在（(?:今日|本期|本周|本月)剩 [^\\n]*）)(?=(\\n通讯录有更新：\\n[\\s\\S]*)?$)';
 const COMPOSER_JS = (text, last) => `(async () => {
   // Hark 多为 textarea；也兼容 contenteditable。优先可见的 textbox / contenteditable，再退回 textarea
   ${PICK_COMPOSER}
@@ -799,10 +801,151 @@ const COMPOSER_JS = (text, last) => `(async () => {
   }
   // M2：写入后确认——不管是点了发送还是补了 Enter，框里没有我们的字才算 sent；还在就只撤回我们写的那段，按 agent-busy 重排
   const mine = normK(text);
-  const ourStill = () => { const now = normK(curText()); return !!now && now.includes(mine.slice(0, Math.min(40, mine.length))); };
+  // 1.3.37：页面发出后常会换掉输入框（React 重挂载）——旧 el 已脱离文档但 value 还在，以前会误判「没发出」、撤回后每轮重投。
+  //         现在：el 脱离文档就重新挑当前输入框来看；另外对话区里我们这段文字的探针行多出一次，也算已发出。
+  const repick = () => [...document.querySelectorAll(sel)].filter(e => !e.disabled && !e.readOnly && vis(e)).sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0] || null;
+  const live = () => el.isConnected ? el : repick();
+  const txtOf = e => e ? String(e.value ?? e.innerText ?? e.textContent ?? '') : '';
+  const probe = String(text).split('\\n').map(normK).filter(l => l.length >= 12 && !l.startsWith('┃')).sort((a, b) => b.length - a.length)[0] || '';
+  const cnt = (h, n) => { if (!n) return 0; let c = 0, i = 0; while ((i = h.indexOf(n, i)) >= 0) { c++; i += n.length; } return c; };
+  const shown = () => { if (!probe) return 0; const e = live(); return cnt(normK(document.body ? document.body.innerText : ''), probe) - cnt(normK(e && e.isContentEditable ? txtOf(e) : ''), probe); };
+  // v6（RXAV P1 + YQEE P2-1/P2-2）：在对话区找一个新增的「我们这条消息的回显」节点才算已发出。
+  //   · 锚点：探针行上 5 处、每处 5 个字的片段（头、1/4、中、3/4、尾；带 id / nonce，旧门铃几乎不撞）。命中的文字节点往上最多 12 层，
+  //     取最近的、textContent 归一后同时含首行和探针行的元素；每次扫描对祖先记忆化（含否都记），每个祖先只算一次 normK（P2-2）。
+  //   · 首行：去掉开头的 emoji / 标点 / 空白，不再按汉字截（S19）。回显要以首行开头，或前面只有不超过 30 字的「发送者 + 时间」类前缀；
+  //     前缀里有失败 / 重试 / 草稿 / 引用 / 助手等字样不算（F4、K10）。
+  //   · 排除链只查到第一个包含输入框的祖先为止（这一层及以上是页面外壳，不查）；找不到输入框时最多 12 层（P2-1）。
+  //     class / id 按词元整词匹配（has-sidebar、nav-open、drawer-layout、link-preview 不算）；data-role / data-author 只在明确是 assistant/bot/system/ai 时排除；
+  //     省略号 / 行数截断只在「消息列之外」生效：截断元素比输入框窄六成以上或和输入框横向不重叠（侧栏预览），对话区里折叠的用户气泡照认（K6/K7）。
+  //   · 气泡自身或往上两层带失败标记（class 词元 failed/error…，或「重试 / 重新发送 / retry」按钮）不算（F4c、F5）。
+  //   · 和点击前的节点集合比，有新节点才算。拿不准就判没发出；但同一封门铃「页面上出现了这段字、却认不出回显」最多按忙撤回 1 次，
+  //     第二次直接按已发出处理（console 提示可能重复），兑现「最坏多推一次」（RXAV ④ / NJNU）。
+  const lead = l => l.replace(/^[^\\p{L}\\p{N}]+/u, '');
+  const head = lead(normK(String(text).split('\\n')[0])).slice(0, 40);
+  const keys = (() => { const L = probe.length, k = 5; if (L < k) return []; return [...new Set([0, L >> 2, L >> 1, (3 * L) >> 2, L - k].map(i => probe.slice(Math.min(i, L - k), Math.min(i, L - k) + k)))]; })();
+  const BAD_TAG = /^(TEXTAREA|INPUT|SCRIPT|STYLE|NAV|ASIDE|HEADER|FOOTER|DIALOG|BLOCKQUOTE)$/;
+  const BAD_ROLE = /^(alert|alertdialog|status|navigation|complementary|banner|contentinfo|dialog|tooltip|menu|listbox)$/;
+  const BAD_TOK = new Set(['assistant', 'assistant-message', 'assistant-msg', 'bot', 'chatbot', 'bot-message', 'ai', 'ai-message', 'ai-msg', 'ai-reply', 'model', 'system-message',
+    'sidebar', 'side-bar', 'nav', 'navbar', 'navigation', 'drawer', 'conversation-list', 'chat-list', 'preview', 'toast', 'snackbar', 'alert', 'notification', 'banner',
+    'error', 'error-banner', 'error-message', 'failed', 'failure', 'send-failed', 'send-error', 'is-error', 'has-error']);
+  const FAIL_TOK = new Set(['error', 'failed', 'failure', 'send-failed', 'send-error', 'is-error', 'has-error', 'error-message']);
+  const toks = m => String(m.className && m.className.baseVal !== undefined ? m.className.baseVal : m.className || '').toLowerCase().split(/\\s+/).concat(String(m.id || '').toLowerCase()).filter(Boolean);
+  const BAD_WHO = /^(assistant|bot|chatbot|system|ai|model|tool)$/;
+  const BAD_PRE = /失败|重试|错误|草稿|引用|助手|你说|你发|回复|发送中|正在发送|未发送|待发送|error|fail|retry|draft|quote|assistant|bot|sending|pending|queued|unsent|[「“"『>]/i;
+  const RETRY = /^(重试|重新发送|再试一次|retry|resend|try again)$/i;
+  const overlay = m => { const box = live(); for (let x = m; x && x !== document.body && x !== document.documentElement; x = x.parentElement) {
+      if (box && x.contains(box)) return false; const p = getComputedStyle(x).position; if (p === 'fixed' || p === 'absolute') return true; }
+    return false; };
+  const boxR = () => { const e = live(); try { return e ? e.getBoundingClientRect() : null; } catch { return null; } };
+  const sideClip = (m, br) => { try { const cs = getComputedStyle(m); if (!(cs.textOverflow === 'ellipsis' || (cs.webkitLineClamp && cs.webkitLineClamp !== 'none'))) return false;
+      if (overlay(m)) return true;   // v7 F2d：截断元素自身或祖先是 position:fixed/absolute 的覆盖层（抽屉盖在消息区上），按侧栏排除
+      if (!br || !br.width) return false; const r = m.getBoundingClientRect(); return r.width < br.width * 0.4 || r.right <= br.left || r.left >= br.right; } catch { return false; } };
+  // v7：失败类 class 词元仍查候选及往上 2 层（确定失败证据）；「重试 / 重新发送」按钮只查候选自身及子孙（S24：不跨到同一 turn 行里助手的按钮）。
+  //     只有按钮、没有失败 class / 失败前缀时不算确定失败（K13：用户气泡常驻「重新发送」），只按「拿不准」计上限。
+  const failCls = n => { for (let m = n, i = 0; m && m !== document.body && i < 3; m = m.parentElement, i++) if (toks(m).some(t => FAIL_TOK.has(t))) return true; return false; };
+  // YQEE P2-2：图标按钮的字常写在 aria-label / title 里，textContent 是空的；data-testid 含 retry / resend 的也算
+  const retryBtn = n => { for (const b of n.querySelectorAll('button,[role="button"],[data-testid]')) { const ti = (b.getAttribute('data-testid') || '').toLowerCase();
+      if (ti.includes('retry') || ti.includes('resend')) return true; if (b.matches('[data-testid]:not(button):not([role="button"])')) continue;
+      if ([b.textContent, b.getAttribute('aria-label'), b.getAttribute('title')].some(x => x && RETRY.test(normK(x)))) return true; } return false; };
+  const failMark = n => failCls(n) || retryBtn(n);
+  const badChain = (n, box) => { if (box && box.contains(n)) return true; const br = boxR();
+    for (let m = n, i = 0; m && m !== document.body && m !== document.documentElement; m = m.parentElement, i++) {
+      if (box ? (m === box || m.contains(box)) : i >= 12) return box ? m === n : false;   // 到了含输入框的公共容器就停；候选本身含输入框则不算
+      if (BAD_TAG.test(m.tagName) || BAD_ROLE.test(m.getAttribute('role') || '') || m.getAttribute('aria-live') === 'assertive') return true;
+      const who = String(m.getAttribute('data-message-author-role') || m.getAttribute('data-role') || m.getAttribute('data-author') || '').trim().toLowerCase();
+      if (BAD_WHO.test(who)) return true;
+      if (toks(m).some(t => BAD_TOK.has(t))) return true;
+      if (sideClip(m, br)) return true; }
+    return false; };
+  const startsOk = u => { const v = lead(u); if (v.startsWith(head)) return true; const i = u.indexOf(head); if (i < 0 || i > 30) return false;
+    return !BAD_PRE.test(u.slice(0, i)); };
+  const badPre = u => { const v = lead(u); if (v.startsWith(head)) return false; const i = u.indexOf(head); return i >= 0 && i <= 30 && BAD_PRE.test(u.slice(0, i)); };
+  // v8（YQEE P2-1）：失败证据分两档。无条件：role=alert/alertdialog、aria-live=assertive、FAIL_TOK 词元（含 error-banner）。
+  //   有条件：role=status、其它 aria-live（polite…）、toast/snackbar/notification/alert 词元——要该处文字去掉门铃原文后仍有失败字样才算
+  //   （消息列表常是 role=log aria-live=polite，「已发送」成功 toast 也常是 role=status，都不能当失败）。
+  //   查字样的文字：有条件那层不超过「原文长度 + 200」就用它，否则只用出现处本身，免得把整个对话历史里的「失败」算进来。
+  const FAIL_WORD = /失败|错误|重试|未能|无法|error|fail|retry|couldn'?t/i;
+  const LINES = String(text).split('\\n').map(normK).filter(l => l.length >= 4).sort((a, b) => b.length - a.length);
+  const restFail = u => { let r = u; for (const l of LINES) r = r.split(l).join(' '); return FAIL_WORD.test(r); };
+  const SOFT_TOK = new Set(['toast', 'snackbar', 'notification', 'alert']);
+  const failChain = (n, box) => { for (let m = n, i = 0; m && m !== document.body && m !== document.documentElement; m = m.parentElement, i++) {
+      if (box ? (m === box || m.contains(box)) : i >= 12) return false;
+      const role = m.getAttribute('role') || '', liv = m.getAttribute('aria-live'), tk = toks(m);
+      if (/^(alert|alertdialog)$/.test(role) || liv === 'assertive' || tk.some(t => FAIL_TOK.has(t) || t === 'error-banner')) return true;
+      if (role === 'status' || (liv && liv !== 'off') || tk.some(t => SOFT_TOK.has(t))) {
+        const mt = normK(m.textContent); if (restFail(mt.length <= mine.length + 200 ? mt : normK(n.textContent))) return true; } }
+    return false; };
+  // v8（真实 Hark DOM，TSMS 两份抓取）：页面有 [data-testid="message-list"] 且其中有 [data-testid="message-text"] 时走白名单——
+  //   只有 message-list 里 message-text（只有用户气泡有）同时含首行和探针才是回显；助手气泡（无 message-text）、侧栏、抽屉、toast 等
+  //   不在 message-text 里的出现处一律算已排除（不计上限）。新旧按所在行的 data-message-id 比（React 重渲染换了元素也不算新）。
+  //   没有这些 data-testid 时（Hark 改版 / 别的页面）退回下面的启发式。
+  //   v8b（YQEE 6 条 / RXAV page_real）：页面有 message-list 就走白名单（没有任何 message-list 才退回启发式和上限）。回显 = 点击前不存在的
+  //   data-message-id（按值比，防重挂载 / 虚拟列表回收）的行，且行不带 data-far-row、行内 message-text 归一后严格以首行开头并含探针、
+  //   id 是 uuid（temp / optimistic / local 等临时 id 视为发送中）、行内没有「重试 / 重新发送 / Retry」按钮。
+  //   只在「新的 near 行 message-text 含探针、但首行对不上」时计上限；其余（助手 far 行、列表外、只满足一个用户标记、临时 id、带重试钮）
+  //   一律不判 sent、不计上限，超时按忙撤回。只满足一个用户标记（near 行无 message-text，或 far 行有 message-text）时 console 记下 data-sha。
+  const MT = '[data-testid="message-text"]', MLIST = '[data-testid="message-list"]', ROW = '[data-message-id]';
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;   // RXAV：严格 uuid（版本 1–8、变体 8/9/a/b）
+  const rowKey = n => { const r = n.closest && n.closest(ROW); return (r && r.getAttribute('data-message-id')) || n; };
+  const idsNow = () => new Set([...document.querySelectorAll(MLIST + ' ' + ROW)].map(r => r.getAttribute('data-message-id')));
+  const wlOdd = r => { try { if (window.__harkWLOdd) return; window.__harkWLOdd = 1; const sha = (document.querySelector('[data-sha]') || { getAttribute: () => '' }).getAttribute('data-sha');
+      console.warn('[Hark Tools] 白名单：门铃原文出现在只带一个用户标记的行里（data-far-row / message-text 不一致），按忙处理；data-sha=' + sha); } catch {} };
+  // 返回 Set（候选回显节点）；顺带分类其余出现处（v7）：
+  //   .fail 确定失败证据（失败 class、BAD_PRE 前缀、failChain 见上；值是该节点里探针出现次数）；
+  //   .amb  拿不准：没被任何排除规则命中、却又认不出回显（如只复述了一行、前缀超 30 字、气泡只带「重新发送」钮）。其余（侧栏、助手、引用、覆盖层…）是已排除，不进任何集合。
+  const echoNodes = () => { const out = new Set(); out.fail = new Map(); out.amb = new Set(); const pc = n => cnt(normK(n.textContent), probe); if (!probe || !head || !keys.length || !document.body) return out; const box = live();
+    const memo = new Map(); const both = n => { let v = memo.get(n); if (v === undefined) { const u = normK(n.textContent); v = u.includes(probe) && u.includes(head) ? u : ''; memo.set(n, v); } return v; };
+    const tw = document.createTreeWalker(document.body, 4); let t; const done = new Set();
+    const wl = !!document.querySelector(MLIST);   // RF10（RXAV 最小修）：message-list 在就一律要求 message-text；「整行当正文」只在页面完全没有 message-list 时（下面的旧启发式）才有
+    while ((t = tw.nextNode())) { const v = normK(t.nodeValue); if (!keys.some(k => v.includes(k))) continue;
+      if (box && box.contains(t)) continue;
+      if (wl) { const r = t.parentElement && t.parentElement.closest(ROW); if (!r || !r.closest(MLIST)) continue;
+        const id = r.getAttribute('data-message-id'); if (ids0 && ids0.has(id)) continue;   // 点击前就有的行（按 id 值）不看
+        if (r.getAttribute('data-entry-kind') !== 'message' || !r.hasAttribute('data-transcript-row')) { if (!done.has(r)) { done.add(r); wlOdd(r); } continue; }   // RF7：行标记不全，按忙
+        const mt = t.parentElement.closest(MT), far = r.hasAttribute('data-far-row');
+        if (!mt || !r.contains(mt)) { if (!far && !done.has(r)) { done.add(r); if (normK(r.textContent).includes(probe)) wlOdd(r); } continue; }
+        if (done.has(mt)) continue; done.add(mt);
+        if (far) { wlOdd(r); continue; }
+        const u = normK(mt.textContent); if (!u.includes(probe)) continue;
+        if (!UUID.test(id || '') || retryBtn(r)) continue;                                   // 临时 id / 带重试钮：发送中或失败，不判 sent
+        if (failCls(mt) || badPre(u)) { out.fail.set(mt, pc(mt)); continue; }
+        if (u.includes(head) && lead(u).startsWith(head)) out.add(id); else out.amb.add(id);
+        continue; }
+      let hit = null;
+      for (let n = t.parentElement, i = 0; n && n !== document.body && i < 12; n = n.parentElement, i++) {
+        if (done.has(n)) { hit = n; break; }
+        const u = both(n); if (!u) continue;
+        done.add(n); hit = n;
+        const bc = badChain(n, box), fc = failCls(n), rb = retryBtn(n);
+        if (startsOk(u) && !bc && !fc && !rb) out.add(rowKey(n));
+        else if (badPre(u) || fc || failChain(n, box)) out.fail.set(n, pc(n));
+        else if (!bc) out.amb.add(rowKey(n));
+        break; }
+      const tp = t.parentElement;
+      if (!hit && tp && !done.has(tp)) { done.add(tp);
+        if (failCls(tp) || failChain(tp, box)) out.fail.set(tp, pc(tp));
+        else if (!badChain(tp, box)) out.amb.add(rowKey(tp)); } }
+    return out; };
+  let ids0 = null; ids0 = document.querySelector(MLIST) ? idsNow() : null;
+  const shown0 = shown(), echo0 = echoNodes(), fail0 = echo0.fail, amb0 = echo0.amb;
+  // RXAV②/YQEE：白名单命中后至少隔 1 秒再查一次——这一行仍在、id 没变、仍满足全部条件（无重试钮、非临时 id…）才算，免得乐观行一闪就判 sent
+  //   按轮询次数计：echoed 每 4×250ms 才查一次，「上一次就见过、这一次还在」即已隔 ≥1 秒（不用 Date.now，页面计时被节流/加速时也一致）
+  const seen = new Map(); let polls = 0;
+  const echoed = () => { if (document.querySelector(MLIST)) { const now = echoNodes(), T = ++polls; let ok = false;
+      for (const k of [...seen.keys()]) if (!now.has(k)) seen.delete(k);
+      for (const k of now) { if (echo0.has(k)) continue; if (!seen.has(k)) seen.set(k, T); else if (T - seen.get(k) >= 1) ok = true; }
+      return ok; }
+    if (shown() <= shown0) return false; for (const n of echoNodes()) if (!echo0.has(n)) return true; return false; };
+  const ourStill = () => { const e = live(); const now = normK(txtOf(e)); return !!now && now.includes(mine.slice(0, Math.min(40, mine.length))); };
   // 撤回我们写的那段：整框都是我们的就清空，否则按位置切掉，用户别的字不动
   const withdraw = () => {
     if (!ourStill()) return 'sent';             // F3'：框里已没有我们的字 = 页面已发出，别当忙重投
+    if (!el.isConnected) {                      // 1.3.37：原输入框被换掉、我们的字留在新框里：新框整框都是我们的才清，否则不动；按忙重排
+      const e = live(); if (e && normK(txtOf(e)) === mine) { e.focus();
+        if (e.tagName === 'TEXTAREA' || e.tagName === 'INPUT') { const P = e.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(P, 'value').set.call(e, ''); e.dispatchEvent(new Event('input', { bubbles: true })); }
+        else { e.textContent = ''; e.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); } }
+      return 'agent-busy';
+    }
     const now = normK(curText());
     if (now === mine) clearAll();
     else if (isField) { const v = String(el.value); const i = v.indexOf(text); if (i >= 0) setVal(v.slice(0, i) + v.slice(i + text.length)); else clearAll(); }
@@ -810,7 +953,26 @@ const COMPOSER_JS = (text, last) => `(async () => {
     return 'agent-busy';
   };
   // P1-2 / #22：点了发送 / 按了 Enter 后最多等 30 秒，期间框一空就算 sent（有的页面收下后 2 秒、甚至 10 秒多才清框）；30 秒还在才撤回
-  const confirm = async () => { for (let t = 0; t < 120; t++) { await new Promise(r => setTimeout(r, 250)); if (!ourStill()) return 'sent'; } return withdraw(); };
+  // v2 P2-1：靠探针判 sent 时，框里若整框还是我们写的那段就清掉（el 被换掉时清 live()）；框里还有用户的字就一字不动
+  const tidy = () => { const e = live(); if (!e || normK(txtOf(e)) !== mine) return 'sent';
+    if (e === el) { clearAll(); return 'sent'; }
+    e.focus(); if (e.tagName === 'TEXTAREA' || e.tagName === 'INPUT') { const P = e.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype; Object.getOwnPropertyDescriptor(P, 'value').set.call(e, ''); e.dispatchEvent(new Event('input', { bubbles: true })); }
+    else { e.textContent = ''; e.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); }
+    return 'sent'; };
+  const confirm = async () => { for (let t = 0; t < 120; t++) { await new Promise(r => setTimeout(r, 250)); if (!ourStill()) return 'sent'; if (t % 4 === 3 && echoed()) return tidy(); } if (echoed()) return tidy();
+    // v6 上限：页面上多出了这段字、却认不出回显（可能是认不出的真回显）→ 第一次按忙撤回；同一封第二次再这样就按已发出处理
+    // v7（YQEE P1-1 / RXAV ①）：新出现的位置里有任何确定失败证据 → 撤回、按忙，不计上限、不 tidy；
+    //     新出现的位置全落在已排除节点里（侧栏、助手、引用、覆盖层…）→ 也永远按忙；只有至少一处「没被任何规则排除、又认不出」才计上限
+    // v7（YQEE P2-1 / RXAV ②）：上限 key = 去掉尾行「你现在（…）」和「通讯录有更新：」段后的正文哈希（bellQuotaFresh 每次重算尾行也不变）；记录 10 分钟作废
+    if ((document.querySelector(MLIST) || shown() > shown0) && ourStill()) { const now = echoNodes(); for (const [n, c] of now.fail) if (!fail0.has(n) || c > fail0.get(n)) return withdraw();   // v8（YQEE P3）：同一失败节点里探针多出现一次也算新证据
+      let amb = false; for (const n of now.amb) if (!amb0.has(n)) { amb = true; break; } if (!amb) return withdraw();
+      const W = window.__harkAmbig || (window.__harkAmbig = {});
+      const body = String(text).replace(new RegExp(${JSON.stringify(QUOTA_TAIL_SRC + '[\\s\\S]*$')}), '').replace(/\\n通讯录有更新：\\n[\\s\\S]*$/, '');
+      let h = 5381; for (let i = 0; i < body.length; i++) h = ((h * 33) ^ body.charCodeAt(i)) >>> 0; const k = body.length + ':' + h.toString(36);
+      for (const x of Object.keys(W)) if (Date.now() - W[x] > 10 * 60 * 1000) delete W[x];
+      if (W[k]) { delete W[k]; window.__harkMaybeDup = (window.__harkMaybeDup || 0) + 1; try { console.warn('[Hark Tools] 门铃可能重复：两次都认不出回显，第二次按已发出处理'); } catch {} return tidy(); }
+      W[k] = Date.now(); }
+    return withdraw(); };
   const enabled = b => b && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
   let b = null;
   for (let i = 0; i < 100; i++) {
@@ -848,6 +1010,8 @@ async function deliverQueue() {
       const wc = deliveryWc(acc);
       let r = 'no-composer';
       if (!isCollabAccount(acc)) { L.status = 'failed'; L.note = '该窗口不参与信箱协同'; continue; }
+      if (L.site && !siteAckCheckedAt && site.ok) await siteAckRefresh().catch(() => {});   // v3：启动后第一次投门铃前先回查一次 ack（旧版存盘里残留的 queued 门铃，不先多投一次）
+      if (L.site && bellDropAcked(L, acc)) { mailSave(); pushState(); continue; }   // 1.3.37：忙时排队期间被 ack 的信出队，全 ack 就撤销
       mail.lastWrite = mail.lastWrite || {};
       // M1：对方 agent 正在生成（侧栏红灯）就不写入、不上传，稍后重试，不计失败
       if (isWorking(acc.id)) r = 'agent-busy';
@@ -865,7 +1029,7 @@ async function deliverQueue() {
       }
       for (let i = 0; i < 24 && r === 'no-composer'; i++) {   // r 为 busy / agent-busy 时不进循环
         if (!wc.isLoading() && collabUrlOk(wc.getURL())) {
-          const text = L.teach ? protocolText(acc) : (L.raw || letterText(L));
+          const text = L.teach ? protocolText(acc) : L.site && L.raw && typeof bellQuotaFresh === 'function' ? bellQuotaFresh(L.raw, acc) : (L.raw || letterText(L));   // 门铃额度尾行投递时现算
           const last = lastWrites(acc.id);   // F2：每轮现读——上一轮可能已写进框后抛异常，这轮要认得它
           noteWrite(acc.id, text); mailSave();   // M3：先记下要写的文字（最近 3 条），写进去后万一卡住，下次认得是自己的
           try { r = await wc.executeJavaScript(COMPOSER_JS(text, last), true); } catch { r = 'no-composer'; }
@@ -1232,19 +1396,60 @@ function quotaTeachText(acc) {
   return `各 Hark 窗口的额度：curl -s "${SITE}/api/quota?series=hark" -H "X-Hark-Machine: ${MACHINE_ID}" -H "Authorization: Bearer <你的token>"（today_left 为今日剩余百分比；不带 token 会返回 401），找窗口协作时挑额度多的。收到回复「好的」就行。`;
 }
 // 额度共享：每个协同窗口今日/本期还剩多少，按系列发到网站 /api/quota
+// 1.3.37 额度口径（ZUJH 2026-10-25）：门铃尾行、/api/quota、侧栏都从 usage[a.id] 现读，同一套分类规则
+// - 今日 = key 为 daily/day/today（或标签「今日」）且不是 topup/额外/项目级 bucket；本期 = pool/月/周等非今日、非额外、非项目 bucket
+// - bucket 的重置时间已过：这份读数是重置前的旧值，不当真，返回 null（显示 ?），等下次轮询
+const QUOTA_EXTRA = /topup|top_up|top-up|extra|bonus|addon|额外|加购|project|项目|workspace|overage|payg|pay-as-you-go|pay_as_you_go|seat|surplus|超额|席位/i;   // team 是计划池，不算额外（与 topup/extra 同现时由前者命中）
+const bucketTag = b => ((b.key || '') + ' ' + (b.label || '')).toLowerCase();
+const isDayBucket = b => !QUOTA_EXTRA.test(bucketTag(b)) && (/(^|[^a-z])(daily|day|today)([^a-z]|$)|^daily|今日/.test(bucketTag(b)));
+const isWeekBucket = b => !QUOTA_EXTRA.test(bucketTag(b)) && /(^|[^a-z])(weekly|week)([^a-z]|$)|^weekly|本周/.test(bucketTag(b));
+const isMonthBucket = b => !QUOTA_EXTRA.test(bucketTag(b)) && /(^|[^a-z])(monthly|month)([^a-z]|$)|^monthly|本月/.test(bucketTag(b));
+const isPeriodBucket = b => !QUOTA_EXTRA.test(bucketTag(b)) && !isDayBucket(b) && /(^|[^a-z])(pool|monthly|month|period|plan|weekly|week|tokens|credits|usage|team)([^a-z]|$)|^pool|本期|本月|本周|^额度$/.test(bucketTag(b));
+const resetsMs = r => { if (r == null) return NaN; const t = typeof r === 'number' ? (r < 1e12 ? r * 1000 : r) : Date.parse(r); return Number.isFinite(t) ? t : NaN; };   // 秒级时间戳先 ×1000
+function bucketExpired(b, now) { const t = b ? resetsMs(b.resets) : NaN; return Number.isFinite(t) && t <= now; }
+let quotaAllExtraLogged = false;
+// 今日只认今日桶；本期只认非今日的计划桶（池/月/周/team/usage）。只有一个桶时不冒充另一个
+function quotaPick(u) {
+  const main = u.buckets.filter(b => !QUOTA_EXTRA.test(bucketTag(b)));
+  if (!main.length) {   // 全是额外/项目桶：不拿它们冒充今日/本期，记一条诊断
+    if (!quotaAllExtraLogged && typeof diagAdd === 'function') { quotaAllExtraLogged = true; try { diagAdd({ t: Date.now(), quota: 'all-extra', keys: u.buckets.map(b => b.key || '') }); } catch {} }
+    return { day: null, per: null, allExtra: true };
+  }
+  const day = main.find(isDayBucket) || null;
+  // 本期按优先级挑：pool/本期 > 月 > 周 > team/plan/usage/credits/tokens；同级取先出现的
+  const PER_RANK = [/(^|[^a-z])(pool|period)([^a-z]|$)|^pool|本期|^额度$/, /(^|[^a-z])(monthly|month)([^a-z]|$)|^monthly|本月/, /(^|[^a-z])(weekly|week)([^a-z]|$)|^weekly|本周/, /(^|[^a-z])(team|plan|usage|credits|tokens)([^a-z]|$)/];
+  const rank = b => { const t = bucketTag(b); const i = PER_RANK.findIndex(r => r.test(t)); return i < 0 ? PER_RANK.length : i; };
+  const cand = main.filter(b => b !== day && isPeriodBucket(b));
+  const per = (cand.length ? cand.reduce((x, b) => rank(b) < rank(x) ? b : x) : null) || main.find(b => b !== day && !isDayBucket(b)) || null;
+  return { day, per };
+}
 function quotaOf(a) {
-  const u = usage[a.id]; if (!u || !u.buckets || !u.buckets.length) return { today_left: null, period_left: null, today_resets: null };
-  const left = b => b && typeof b.pct === 'number' ? Math.round((100 - b.pct) * 10) / 10 : null;
-  const day = u.buckets.find(b => /daily|day|今日/.test((b.key || '') + (b.label || '')));
-  const week = u.buckets.find(b => /weekly|week|周/.test((b.key || '') + (b.label || '')));
-  const primary = day || week || u.buckets.find(b => !/topup|额外/.test((b.key || '') + (b.label || ''))) || u.buckets[0];
-  const per = u.buckets.find(b => b !== primary && !/topup|额外/.test((b.key || '') + (b.label || ''))) || (week && week !== primary ? week : null);
-  const resets = primary && primary.resets != null ? (typeof primary.resets === 'number' ? new Date(primary.resets).toISOString() : String(primary.resets)) : null;
-  return { today_left: left(primary), period_left: left(per || primary), today_resets: resets, read_at: u.at ? new Date(u.at).toISOString() : null };
+  const u = usage[a.id]; if (!u || !u.buckets || !u.buckets.length) return { today_left: null, period_left: null, period_label: null, today_resets: null };
+  const now = Date.now();
+  const left = b => b && typeof b.pct === 'number' && !bucketExpired(b, now) ? Math.round((100 - b.pct) * 10) / 10 : null;
+  const { day, per, allExtra } = quotaPick(u);
+  const rt = day ? resetsMs(day.resets) : NaN;
+  const resets = day && day.resets != null ? (Number.isFinite(rt) ? new Date(rt).toISOString() : String(day.resets)) : null;
+  const period_label = per ? (isWeekBucket(per) ? '本周' : isMonthBucket(per) ? '本月' : '本期') : null;
+  return { today_left: left(day), period_left: left(per), period_label, all_extra: !!allExtra, today_resets: resets, read_at: u.at ? new Date(u.at).toISOString() : null };
 }
 function quotaText(a) {
-  const q = quotaOf(a); if (q.today_left == null && q.period_left == null) return '';
-  return `（今日剩 ${q.today_left ?? '?'}%，本期剩 ${q.period_left ?? '?'}%）`;
+  const u = usage[a.id]; if (!u || !u.buckets || !u.buckets.length) return '';
+  const q = quotaOf(a), { day, per } = quotaPick(u);
+  const parts = [];
+  if (day) parts.push(`今日剩 ${q.today_left ?? '?'}%`);
+  if (per) parts.push(`${q.period_label}剩 ${q.period_left ?? '?'}%`);
+  if (!parts.length || (q.today_left == null && q.period_left == null)) return '';
+  return `（${parts.join('，')}）`;
+}
+// 门铃在入队时就渲染好 raw，可能排队很久（草稿/生成中/离线）才投出；投递时把尾行「你现在（…）」换成此刻的额度
+function bellQuotaFresh(raw, a) {
+  if (typeof raw !== 'string' || !a) return raw;
+  // 只认门铃自己的尾行：行首「你现在（今日/本期/本周/本月剩 …）」的最后一处，且其后只能是结尾或「通讯录有更新：」段；正文里其它同形行不动
+  const re = /(^|\n)(你现在（(?:今日|本期|本周|本月)剩 [^\n]*）)(?=(\n通讯录有更新：\n[\s\S]*)?$)/;
+  const m = re.exec(raw); if (!m) return raw;
+  const q = quotaText(a), at = m.index + m[1].length;
+  return q ? raw.slice(0, at) + `你现在${q}` + raw.slice(at + m[2].length) : raw.slice(0, m.index) + raw.slice(at + m[2].length);
 }
 async function siteReq(q, body, token) {
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000);
@@ -1459,6 +1664,42 @@ const EXT_ONLY_GAP_MS = 24 * 3600 * 1000;     // 且这种合并提示每窗口 
 const EXT_IDS_SHOWN = 30;             // 未登记来信那一行最多列出的 id 数
 const MSG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 let sitePolling = false, siteHeadCheckedAt = 0, siteLowHeads = 0, siteBurst = 0, siteFullPage = false;
+// 1.3.37：已读（ack）登记——网站列表每封信带 acked_by。收件窗口已 ack 的信不入铃；待发区和还没投出去的门铃里被 ack 的信出队。
+const ACK_CHECK_MS = 15 * 1000;       // 有待发 / 排队门铃时，每 15 秒按 seq 回查一次 acked_by
+const siteAcked = new Map();          // id -> Set(已 ack 的地址)，只在内存里
+let siteAckCheckedAt = 0;
+function ackNote(m) { const by = m && m.acked_by; if (!by || typeof by !== 'object' || !MSG_ID_RE.test(String(m.id))) return; const set = siteAcked.get(String(m.id)) || new Set(); for (const k of Object.keys(by)) set.add(k); if (set.size) siteAcked.set(String(m.id), set); if (siteAcked.size > 5000) siteAcked.delete(siteAcked.keys().next().value); }
+const isAcked = (id, addr) => !!(siteAcked.get(String(id)) && siteAcked.get(String(id)).has(addr));
+// 回查：从待发区 / 排队门铃里最小的 seq 往后取一页列表（不含正文），只为刷新 acked_by
+async function siteAckRefresh() {
+  const seqs = [];
+  for (const q of Object.values(mail.sitePending || {})) for (const e of q || []) if (epochOf(e) === mail.siteEpoch) seqs.push(Number(e.msg.seq));
+  for (const L of mail.letters) if (L.site && L.status === 'queued' && Array.isArray(L.bellItems)) for (const x of L.bellItems) if (!(isFinite(x.epoch) && x.epoch !== mail.siteEpoch)) seqs.push(Number(x.msg.seq));
+  const min = Math.min(...seqs.filter(n => n > 0));
+  if (!isFinite(min) || Date.now() - siteAckCheckedAt < ACK_CHECK_MS) return;
+  siteAckCheckedAt = Date.now();
+  // v2 C3：一页 100 封，最多连查 5 页（500 封），待发信排在 100 封以外也能拿到 ack
+  let since = min - 1;
+  for (let page = 0; page < 5; page++) {
+    const j = await siteGet(`/api/message?to_prefix=hark.&since_seq=${since}&limit=100`);
+    const ms = j && Array.isArray(j.messages) ? j.messages : [];
+    for (const m of ms) ackNote(m);
+    const top = Math.max(since, ...ms.map(m => Number(m.seq) || 0));
+    if (ms.length < 100 || top <= since) break;
+    since = top;
+  }
+}
+// 排队门铃去掉已 ack 的信：全都 ack 了就撤销；部分 ack 就按剩下的信重写门铃。返回 true = 这封门铃已撤销
+function bellDropAcked(L, a) {
+  if (!L.site || !Array.isArray(L.bellItems) || !a) return false;
+  const addr = siteAddr(a);
+  const items = L.bellItems.filter(x => !isAcked(x.msg.id, addr)), ext = (L.bellExt || []).filter(id => !isAcked(id, addr));
+  if (items.length === L.bellItems.length && ext.length === (L.bellExt || []).length) return false;
+  if (!items.length && !ext.length) { L.status = 'acked'; L.note = '收件窗口已读（ack），门铃撤销'; delete L.retryAt; return true; }
+  L.bellItems = items; L.bellExt = ext;
+  L.raw = L.body = siteBellText(a, items, L.bellDropped || 0, ext); L.bookHash = siteBellText.lastBookHash;
+  return false;
+}
 
 function sitePendingInit() {
   const obj = v => v && typeof v === 'object' && !Array.isArray(v);
@@ -1625,9 +1866,12 @@ function siteFlushAcc(accId) {
     if (now0 - mail.siteGoneAt[accId] < SITE_GONE_MS) return;
     delete mail.siteGoneAt[accId]; delete mail.sitePending[accId]; delete mail.siteDropped[accId]; delete mail.siteRungIds[accId]; delete mail.siteRungSeq[accId]; delete mail.siteLastBellAt[accId]; delete mail.siteExtOnlyAt[accId]; mailSave(); return; }
   if (accId in mail.siteGoneAt) { delete mail.siteGoneAt[accId]; mailSave(); }    // 重新出现：取消待清
-  const q0 = mail.sitePending[accId] || [];
+  let q0 = mail.sitePending[accId] || [];
   if (!q0.length) { siteFetching.delete(accId); delete mail.sitePending[accId]; return; }
   const now = now0;
+  // 1.3.37：待发区里收件窗口已 ack 的信直接出队（登记为已处理，不再入铃）
+  { const ad = siteAddr(a), gone = q0.filter(e => isAcked(e.msg.id, ad));
+    if (gone.length) { for (const e of gone) markRung(accId, e.msg, epochOf(e)); const rest = q0.filter(e => !gone.includes(e)); if (rest.length) mail.sitePending[accId] = rest; else delete mail.sitePending[accId]; mailSave(); if (!rest.length) { siteFetching.delete(accId); return; } q0 = rest; } }   // v2 P2-2：部分 ack 不递归，接着处理剩下的
   // 过期提醒（>6 天，网站上的信也快过期了）：丢弃并计数
   const keep = q0.filter(e => now - e.firstAt < PENDING_TTL_MS);
   if (keep.length !== q0.length) {
@@ -1793,6 +2037,9 @@ async function sitePoll() {
       else if (m.to === 'all') targets = collab.filter(a => loginState[a.id]);
       // 忽略历史 mu.* / to=mu 信件：Muse 已下线
       targets = targets.filter(a => siteAddr(a) !== m.from);
+      ackNote(m);
+      for (const a of targets.filter(a => isAcked(m.id, siteAddr(a)))) markRung(a.id, slimMsg(m));   // 1.3.37：已 ack 的信不入铃，登记为已处理
+      targets = targets.filter(a => !isAcked(m.id, siteAddr(a)));
       { const me = collab.find(a => siteAddr(a) === m.from); if (me && mail.siteReg && !mail.siteReg[me.id]) { mail.siteReg[me.id] = Date.now(); mailSave(); } }   // 见过它发信 = 已注册
       for (const a of targets) if (sitePendingAdd(a.id, m, now)) added++;
       if (Number.isFinite(m.ts_ms) && !(m.ts_ms <= mail.siteLastSeenAt)) mail.siteLastSeenAt = m.ts_ms;
@@ -1805,6 +2052,7 @@ async function sitePoll() {
   // 一次取满 100 封（洪泛）：立即续取，每轮最多连取 10 页，避免积压让正常信越排越后
   if (siteFullPage && siteBurst < 10) { siteBurst++; siteFullPage = false; return sitePoll(); }
   siteBurst = 0; siteFullPage = false;
+  if (!mail.paused) await siteAckRefresh().catch(() => {});
   siteFlush().catch(() => {});
 }
 // P1-4：没有 retryAt 的待投信也要补投——合并出的新门铃入队时若投递循环正忙（本轮已选好要投的信），最迟 15 秒后由这里接上

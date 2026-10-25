@@ -60,6 +60,7 @@ body{background:var(--ledge);display:flex;flex-direction:column;overflow:hidden;
   #list.edit .acc{animation:none;outline:1px dashed var(--seam);outline-offset:-1px}
   #list.edit .acc.slide{transition:none}
 }
+.q.per{opacity:.75}.q.na{opacity:.5}
 </style></head><body>
 <div class="brand"><div class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="#2A2216"><path d="M4 19c3.5-7 8-11.5 16-14-3 4-4.4 8.3-3.8 14.2C12.4 16.6 8.4 16.7 4 19z"/></svg></div><b>Hark Tools<span>by Miracle AI</span></b></div>
 <button class="nav" id="homeBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>总览</button>
@@ -93,7 +94,7 @@ function askAdd(cb){
   dc.onclick=()=>done(null);
   i.onkeydown=e=>{if(e.key==='Enter')ok.click();if(e.key==='Escape')dc.click()};
 }
-const daily=a=>{const b=a.usage&&a.usage.buckets&&(a.usage.buckets.find(x=>/day|daily/.test(x.key))||a.usage.buckets[0]);if(!b||b.pct==null)return '';const left=Math.max(0,Math.min(100,100-Number(b.pct)));const L=Math.round(left);return `<span class="q ${left<=20?'low':left<=50?'mid':''}" title="今日已用 ${b.pct}%，剩 ${Math.round(left*10)/10}%">${L}%<span class="bat"><i style="width:calc((100% - 2px) * ${(left/100).toFixed(3)})"></i></span></span>`};
+const daily=a=>{const q=a.quota||{};let t=q.today_left,lab='今日',dim='';if(typeof t!=='number'&&typeof q.period_left==='number'){t=q.period_left;lab=q.period_label||'本期';dim=' per'}if(typeof t!=='number')return q.all_extra?'<span class="q na" title="未识别到今日/本期额度（仅额外额度桶）">—</span>':'';const left=Math.max(0,Math.min(100,t));const used=Math.round((100-left)*10)/10;const L=Math.round(left);return `<span class="q${dim} ${left<=20?'low':left<=50?'mid':''}" title="${lab}已用 ${used}%，剩 ${Math.round(left*10)/10}%${dim?'（无今日额度，显示'+lab+'）':''}">${dim?lab.slice(-1):''}${L}%<span class="bat"><i style="width:calc((100% - 2px) * ${(left/100).toFixed(3)})"></i></span></span>`};
 // 工作状态：灰=未登录、红=工作中、绿=空闲中
 const ws=a=>!a.loggedIn?{c:'',l:'',t:'未登录'}:a.working?{c:'busy',l:'busy',t:'工作中'}:{c:'ok',l:'on',t:'空闲中'};
 let st={accounts:[],activeId:null,showHome:false},ctxId=null;
