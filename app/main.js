@@ -1,5 +1,5 @@
 // Hark Cockpit: 每个 Hark 账号一个独立的持久化会话（cookie/登录态互不干扰），侧栏一键切换。
-const { app, BaseWindow, WebContentsView, ipcMain, session, shell, Menu, powerSaveBlocker } = require('electron');
+const { app, BaseWindow, WebContentsView, ipcMain, session, shell, Menu, powerSaveBlocker, powerMonitor } = require('electron');
 // 1.3.38：Tools 被全屏游戏等盖住、或最小化时，Chromium 会把整个窗口当成「看不见」——页面降频、冻结，Hark 页面也会暂停刷新，
 //         侧栏的「在忙」灯停在亮着，门铃一直排队不投，所有窗口就像停工。这里关掉遮挡检测和后台降频（必须在 app ready 前设）。
 try {
@@ -109,20 +109,53 @@ function keepAwake(wc) {
   return Promise.race([cdp(), new Promise(r => setTimeout(r, 1500))]).catch(() => {}).then(run);
 }
 // P2-13：只在有门铃排队或有窗口在干活时防挂起，空闲时放开，电脑照常睡眠
-let awakeBlock = null, awakeSince = 0, awakeCapped = false;
-const AWAKE_MAX_MS = 2 * 60 * 60 * 1000;   // P3：连续防挂起最多 2 小时（在忙灯卡亮时也让电脑能睡），条件消失后才重新计
-function awakeNeed() { try { return mail.letters.some(x => x.status === 'queued') || accounts.some(a => isWorking(a.id)); } catch { return false; } }
-function awakeTick() {
-  let need = awakeNeed();
-  if (!need) awakeCapped = false;
-  else if (awakeBlock != null && Date.now() - awakeSince > AWAKE_MAX_MS) { awakeCapped = true; lampAdd({ t: Date.now(), lamp: 'awake', capped: true }); }
-  if (awakeCapped) need = false;
+// v11（QUTN P1-1 / CZRA 1ad541e5、493ab6e5、d5e31512 / ZUJH X3 S9 / QSRL E–I）：
+//   ① 干活这一路按窗口封顶（X3）：awakeWork[id] = { since, capped, offAt }。某窗口 isWorking 连续为真超过 AWAKE_MAX_MS 置它的 capped
+//      （lamp=awake capped 每窗口置位时记一次，带 acc 序号）；该窗口 isWorking 连续为假满 AWAKE_OFF_MS（60s）才清它的计时（S9：一次探针超时不重计）。
+//      干活路 = 某窗口 isWorking 且该窗口未 capped。计时只看本窗口 isWorking，不被排队信拖住（QSRL H）；删窗口时 awakeForget 清键。新信不清上限（awakeKick 已删）。
+//   ② 排队信这一路只认「新鲜」信（X2 沿用 v10 做法）：queued、还没被 deliverQueue 试投过（无 retryAt / busySince / agentBusySince），
+//      且不是「收件窗口 isWorking 且该窗口已 capped」。能投出的信第一次试投就投完（B：每封防挂起到投递为止，投完即停）。
+//   ③ 防坑（实查 deliverQueue）：收件窗口在干活 → r='agent-busy' 每 AGENT_BUSY_RETRY_MS（10s）重排；输入框有用户草稿 → r='busy' 每 30s 重排；
+//      两条都没有超时、也不放弃，信一直 queued。它们第一次试投就写 retryAt + agentBusySince/busySince，此后不再算理由——
+//      agent-busy 的信由收件窗口自己的干活路（未 capped 时）兜着；草稿信要等用户回来清草稿，不需要防挂起；今后任何走 retryAt 重排的路也自动排除。
+//      代价：新信在第一次试投前（通常 <1s，最坏一拍 15s）仍算理由。
+//   ④ v12（ZUJH P2-L / CZRA 55c9b042）：新鲜信再加入队 2h 兜底，按 L.awakeAt||L.at；合并门铃把被并旧信最早的时间存进 awakeAt（不改 L.at），
+//      手动重试（mailRetry 重置 L.at）时删 awakeAt，自然又算一次新鲜。
+let awakeBlock = null;
+const AWAKE_MAX_MS = 2 * 60 * 60 * 1000, AWAKE_OFF_MS = 60 * 1000;
+const awakeWork = new Map();   // accId -> { since, capped, offAt }
+function awakeForget(id) { awakeWork.delete(id); }
+const awakeCappedWorking = id => isWorking(id) && !!awakeWork.get(id)?.capped;
+const letterFresh = (x, now = Date.now()) => x.status === 'queued' && x.retryAt == null && !x.busySince && !x.agentBusySince && !awakeCappedWorking(x.to)
+  && now - (x.awakeAt || x.at || 0) < AWAKE_MAX_MS;   // v12 P2-L：deliverQueue 卡死、信一直没被试投时，入队 2h 兜底
+function awakeNeed(now = Date.now()) {
   try {
-    if (need && (awakeBlock == null || !powerSaveBlocker.isStarted(awakeBlock))) { awakeBlock = powerSaveBlocker.start('prevent-app-suspension'); awakeSince = Date.now(); lampAdd({ t: Date.now(), lamp: 'awake', on: true }); }
+    let working = false;
+    accounts.forEach((a, ai) => {
+      let w = awakeWork.get(a.id);
+      if (isWorking(a.id)) {
+        if (!w) awakeWork.set(a.id, w = { since: now, capped: false, offAt: 0 });
+        w.offAt = 0;
+        if (!w.capped && now - w.since > AWAKE_MAX_MS) { w.capped = true; lampAdd({ t: now, lamp: 'awake', capped: true, acc: ai }); }
+        if (!w.capped) working = true;
+      } else if (w) {
+        if (!w.offAt) w.offAt = now;
+        else if (now - w.offAt >= AWAKE_OFF_MS) awakeWork.delete(a.id);
+      }
+    });
+    return working || mail.letters.some(x => letterFresh(x, now));
+  } catch { return false; }
+}
+function awakeTick() {
+  const need = awakeNeed();
+  try {
+    if (need && (awakeBlock == null || !powerSaveBlocker.isStarted(awakeBlock))) { awakeBlock = powerSaveBlocker.start('prevent-app-suspension'); lampAdd({ t: Date.now(), lamp: 'awake', on: true }); }
     else if (!need && awakeBlock != null) { if (powerSaveBlocker.isStarted(awakeBlock)) powerSaveBlocker.stop(awakeBlock); awakeBlock = null; lampAdd({ t: Date.now(), lamp: 'awake', on: false }); }
   } catch {}
 }
 app.whenReady().then(() => setInterval(awakeTick, 15000));
+// 第19条：锁屏/睡眠事件记进 lamp=win，便于把信归到对应状态
+app.whenReady().then(() => { for (const ev of ['lock-screen', 'unlock-screen', 'suspend', 'resume']) powerMonitor.on(ev, () => lampAdd({ t: Date.now(), lamp: 'win', ev })); });
 
 function partitionOf(id) { return `persist:hark-${id}`; }
 
@@ -201,16 +234,28 @@ function layout() {
   for (const v of inboxViews.values()) { v.setBounds(main); v.setVisible(false); }
 }
 
-function activate(id) {
+// 1.3.39 #19：前台账号切换记进 lamp=win {ev:'active', acc, from, home}。acc/from 是侧栏序号（0 起，与其它 lamp 记录的 acc 同一口径），没有为 -1；
+// home=true 表示切到了总览。只在（前台账号, 是否总览）真的变了才记，同一账号重复点不记。删号回退时 from 用删除前的序号。
+let lampFg = { id: null, home: false, idx: -1 };
+function lampActive(fromIdx) {
+  const id = activeId, home = !!showHome;
+  if (lampFg.id === id && lampFg.home === home) return false;
+  const idx = accounts.findIndex(a => a.id === id);
+  const from = typeof fromIdx === 'number' ? fromIdx : (lampFg.id == null ? -1 : (() => { const k = accounts.findIndex(a => a.id === lampFg.id); return k >= 0 ? k : lampFg.idx; })());
+  lampAdd({ t: Date.now(), lamp: 'win', ev: 'active', acc: idx, from, home });
+  lampFg = { id, home, idx };
+  return true;
+}
+function activate(id, fromIdx) {
   const acc = accounts.find(a => a.id === id);
   if (!acc) return;
-  activeId = id; showHome = false;
+  activeId = id; showHome = false; lampActive(fromIdx);
   const v = getView(acc);
   layout(); v.webContents.focus();
   setImmediate(() => { save(); pushState(); });
 }
 
-function showOverview() { showHome = true; layout(); pushState(); home?.webContents.focus(); }
+function showOverview(fromIdx) { showHome = true; lampActive(fromIdx); layout(); pushState(); home?.webContents.focus(); }
 
 // 登录状态：Hark 看 hark.com session
 const loginState = {};
@@ -225,7 +270,7 @@ async function refreshStatus() {
     } catch { loginState[a.id] = false; }
   }));
 }
-function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], working: isWorking(a.id), usage: usage[a.id] || null, quota: quotaOf(a), kind: 'hark', bellWait: bellWait(a.id) })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
+function snapshot() { return { accounts: accounts.map(a => ({ ...a, loggedIn: !!loginState[a.id], working: lampShown(a.id), usage: usage[a.id] || null, quota: quotaOf(a), kind: 'hark', bellWait: bellWait(a.id) })), activeId, showHome, usageReady: !!usageCfg.url, mail: mailSnapshot() }; }
 let pushT;
 function pushState() {
   clearTimeout(pushT);
@@ -262,7 +307,8 @@ ipcMain.handle('reorder', (_e, ids) => {
   if (!ids.every(id => byId.has(id))) return reject('unknown');
   const next = ids.map(id => byId.get(id));
   if (next.every((a, i) => a === accounts[i])) return { ok: true, unchanged: true };
-  accounts = next; save(); pushState();   // 信箱地址存在 a.mail 上，跟着对象走，不受顺序影响
+  const perm = next.map(a => accounts.indexOf(a));   // v2（S6）：新顺序第 i 位是原来的第 perm[i] 号，事后可把旧记录的 acc 对回账号
+  accounts = next; save(); pushState(); lampAdd({ t: Date.now(), lamp: 'win', ev: 'order', n: next.length, perm });   // 信箱地址存在 a.mail 上，跟着对象走，不受顺序影响
   return { ok: true };
 });
 ipcMain.handle('setEditing', (_e, on) => { sidebarEditing = on === true; return sidebarEditing; });
@@ -277,14 +323,15 @@ ipcMain.handle('setInbox', (_e, { id, mode }) => {
 ipcMain.handle('rename', (_e, { id, name }) => { const a = accounts.find(x => x.id === id); if (a) { a.name = name; save(); pushState(); } });
 ipcMain.handle('reload', (_e, id) => views.get(id)?.webContents.reload());
 ipcMain.handle('remove', async (_e, id) => {
+  const wasIdx = activeId === id ? accounts.findIndex(a => a.id === id) : undefined;   // #19：删的是前台账号，回退记录的 from 用它删除前的序号
   const v = views.get(id);
   if (v) { win.contentView.removeChildView(v); v.webContents.close(); views.delete(id); }
-  dropInboxView(id);
+  dropInboxView(id); awakeForget(id);   // v11 X3：删窗口清防挂起计时键
   await session.fromPartition(partitionOf(id)).clearStorageData(); // 删除账号时一并清除其登录态
   accounts = accounts.filter(a => a.id !== id);
   if (activeId === id) activeId = accounts[0]?.id || null;
   save();
-  if (activeId) activate(activeId); else showOverview();
+  if (activeId) activate(activeId, wasIdx); else showOverview(wasIdx);
 });
 ipcMain.handle('getState', async () => { await refreshStatus(); return snapshot(); });
 ipcMain.handle('home', () => showOverview());
@@ -342,7 +389,7 @@ const workOf = id => work[id] || (work[id] = { busyAt: 0, working: false });
 function isWorking(id) { return !!loginState[id] && !!work[id]?.working; }
 const isHarkHost = u => { try { const h = new URL(u).hostname.toLowerCase().replace(/\.$/, ''); return h === 'hark.com' || h.endsWith('.hark.com'); } catch { return false; } };
 // 用函数延后拼接：PICK_COMPOSER 在文件后面才定义。返回 { busy, rule, seen }：rule 是命中的规则，seen 是输入框附近「正在…」候选的结构快照（给诊断用）
-const stopJs = () => `(() => { ${PICK_COMPOSER}
+const stopCoreJs = () => `(() => { ${PICK_COMPOSER}
   const shown = b => { const r = b.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || getComputedStyle(b).visibility === 'hidden') return false;
     let op = 1; for (let a = b, i = 0; a && i < 8; a = a.parentElement, i++) op *= parseFloat(getComputedStyle(a).opacity);   // 淡出中的气泡（祖先 opacity 低）不算
     return op > 0.3; };
@@ -408,12 +455,78 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
       if (r.bottom <= box.top + 4 && r.bottom > bb && r.width > 0 && r.right > box.left && r.left < box.right) { bb = r.bottom; best = q; } }
     if (best && box.top - bb < 300) seen.push({ verdict: 'near-text', chain: chain(best) }); }
   return { busy: false, rule: '', seen }; })()`;
+// 1.3.39 #18：很短的回复不亮灯。根因：灯靠每秒一次的采样（WORK_POLL_MS=1000，探针最长 1.5s 超时，上一轮没跑完时整轮跳过），
+// 相邻两次采样最多隔 ~2.5s；停止按钮 / live-run-pill 只出现 <1–2s 的生成正好落在两次采样之间，探针一次都没看见，灯就不亮（亮灯本身没有去抖，漏在采样）。
+// 修法：页面里装一个 MutationObserver「锁存」——停止按钮或 live-run-pill 一出现就记下时刻，下一次探针读走并清掉，哪怕它早已消失也算命中一次（规则名 latch:*）。
+// 只锁存两条强规则（停止按钮、live-run-pill），判定条件与探针相同（位置、排除消息气泡、排除录音停止），弱气泡规则不锁存，不扩大误亮面。
+// latchJs 用函数延后拼接：PICK_COMPOSER 在文件后面才定义（同 stopJs）
+const latchJs = () => `(() => { if (window.__harkLatchOn) return; window.__harkLatchOn = 1; window.__harkLatch = { at: 0, rule: '' };
+  const pick = () => { ${PICK_COMPOSER} return el; };
+  const PILL_SEL = '[data-testid="live-run-pill"],[data-testid="run-narration"]';
+  const STOP = /^(stop|stop generating|stop response|stop responding|interrupt|cancel response|停止|停止生成|停止回复|停止回答|中断|取消生成)$/i;
+  const NOT_STOP = /录音|录制|语音|麦克风|听写|recording|record|dictation|voice|mic|audio/i;
+  const label = b => String(b.getAttribute('aria-label') || b.title || (String(b.innerText || '').length <= 16 ? b.innerText : '')).trim().replace(/\\s+/g, ' ');
+  // v2（ZUJH M1）：与原探针同一个 shown()——有尺寸、未 hidden、祖先 opacity 连乘 >0.3。透明常驻的停止键 / 淡出后留在 DOM 的 pill 不锁存
+  const shown = b => { const r = b.getBoundingClientRect(); if (!(r.width > 0 && r.height > 0) || getComputedStyle(b).visibility === 'hidden') return false;
+    let op = 1; for (let a = b, i = 0; a && i < 8; a = a.parentElement, i++) op *= parseFloat(getComputedStyle(a).opacity);
+    return op > 0.3; };
+  const sized = b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(b).visibility !== 'hidden'; };   // 只用来判断“除透明度外都达标”，从不据此锁存
+  const boxOf = el => { const f = el.closest('form'); const fr = f && f.getBoundingClientRect(); const er = el.getBoundingClientRect(); return fr && fr.height < 320 ? fr : er; };
+  const hit = rule => { window.__harkLatch = { at: Date.now(), rule }; };
+  const pillOk = (lp, el, box, vis = shown) => { if (!lp.isConnected || lp.contains(el) || lp.closest('[data-testid="message-bubble"],[data-testid="message-text"]') || !vis(lp)) return false;
+    const r = lp.getBoundingClientRect(); return !(r.right < box.left || r.left > box.right || r.bottom > box.top + 4 || r.bottom < box.top - 400); };
+  const stopOk = (b, box, vis = shown) => { if (!vis(b) || b.disabled) return false; const l = label(b), tid = b.getAttribute('data-testid') || '';
+    if (NOT_STOP.test(l + ' ' + tid) || !(STOP.test(l) || /^stop(-|_)?(button|generating|response)?$/i.test(tid))) return false;
+    const r = b.getBoundingClientRect(), cx = r.left + r.width / 2; return cx >= box.left + box.width * 0.5 && cx <= box.right + 8 && r.top >= box.top - 8 && r.bottom <= box.bottom + 8; };
+  const unread = () => window.__harkLatch.at > (window.__harkLatchRead || 0);   // v2（S2）：已锁存、还没被探针读走时不再做全量判定
+  // v3（ZUJH N2）：除透明度外全部达标的停止键 / pill（class 切换 + CSS 淡入第一帧）→ 250ms 后用同一个 shown() 复核
+  // v5（CZRA 返修 1）：淡入 >0.8s 也要抓到——仍“除透明度外都达标”就每 250ms 再复核，一轮最多 6 次（约 1.5s），同一时刻只挂一个复核定时器；
+  //   另监听 transitionrun / transitionend 触发一次常规判定（更长的 CSS 淡入结束时也能抓到）。判定始终只用 shown()，常驻透明不锁存
+  const RE_MS = 250, RE_MAX = 6;
+  let re = 0, reN = 0;
+  const arm = () => { if (re || reN >= RE_MAX) return; reN++; re = setTimeout(() => { re = 0; try { full(true); } catch {} }, RE_MS); };
+  const full = (fromRe) => { if (!fromRe && !re) reN = 0;   // 新一轮（不在复核链里）重新计数
+    if (unread()) { reN = RE_MAX; return; } const el = pick(); if (!el) return; const box = boxOf(el);
+    const pills = document.querySelectorAll(PILL_SEL);
+    for (const lp of pills) if (pillOk(lp, el, box)) { reN = RE_MAX; return hit('live-run-pill'); }
+    const root = el.closest('form') || el.parentElement?.parentElement?.parentElement?.parentElement || document;
+    const btns = root.querySelectorAll('button,[role="button"]');
+    for (const b of btns) if (stopOk(b, box)) { reN = RE_MAX; return hit('stop-button'); }
+    if (re) return;   // 复核链已在跑，不另挂
+    let faint = false; for (const lp of pills) if (pillOk(lp, el, box, sized)) { faint = true; break; }
+    if (!faint) for (const b of btns) if (stopOk(b, box, sized)) { faint = true; break; }
+    if (faint) arm(); };
+  let last = 0, timer = 0;
+  const later = () => { if (timer) return; const wait = Math.max(0, 100 - (Date.now() - last)); timer = setTimeout(() => { timer = 0; last = Date.now(); try { full(); } catch {} }, wait); };
+  const mo = new MutationObserver(recs => { try {
+    let el = null, box = null;
+    for (const m of recs) for (const n of m.addedNodes || []) { if (n.nodeType !== 1) continue;   // 新加的节点当场查一次：只存在几十毫秒的 pill 也抓得到
+      const lp = n.matches(PILL_SEL) ? n : n.querySelector(PILL_SEL); if (!lp) continue;
+      if (!el) { el = pick(); if (!el) break; box = boxOf(el); }
+      if (pillOk(lp, el, box)) { hit('live-run-pill'); break; }
+      // 刚插入时还透明（淡入第一帧）：走同一条复核链（每 250ms、最多约 1.5s），仍在且 shown() 可见才锁存；判定不放宽
+      if (!re) { reN = 0; arm(); } }
+  } catch {} later(); });
+  const go = () => { try { mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label', 'title', 'data-testid', 'disabled', 'class'] }); } catch {} };
+  go();
+  // v5：CSS 淡入开始/结束各补一次常规判定（经 later 节流）；v6（ZUJH S7）：只认 pill / 按钮自身或其内部、包着 pill 的容器、输入框表单内包着按钮的容器上的过渡，页面别处的悬停、动画不触发
+  const TR_SEL = PILL_SEL + ',button,[role="button"]';
+  const onTr = e => { try { const el = e.target; if (el && el.nodeType === 1 && (el.closest(TR_SEL) || el.querySelector(PILL_SEL) || (el.closest('form') && el.querySelector('button,[role="button"]')))) later(); } catch {} };
+  for (const ev of ['transitionrun', 'transitionend']) try { document.addEventListener(ev, onTr, true); } catch {}
+  })();`;
+// 探针 = 锁存安装（幂等）+ 原探针；原探针没命中时读锁存：上次读之后锁存过就按 latch:<规则> 命中一次。读完即清，同一次出现只亮一次
+const stopJs = () => `(() => { try { ${latchJs()} } catch {}
+  const R = ${stopCoreJs()};
+  try { const L = window.__harkLatch, rd = window.__harkLatchRead || 0, now = Date.now(); window.__harkLatchRead = now;
+    if (R && !R.busy && L && L.at > rd) return { busy: true, rule: 'latch:' + L.rule, seen: R.seen || [] }; } catch {}
+  return R; })()`;
 // 诊断：输入框附近每种「正在…」候选结构记一次（按判定 + 祖先链签名去重，最多 40 条），用户在侧栏导出诊断即可拿到真实 DOM 结构
 const lampSeen = new Set();
 const lampLog = [];   // 状态灯诊断单独存，最多 300 条，不被额度诊断挤掉
 const lampProbeLast = new Map();
-const LAMP_QUOTA = { win: 200, awake: 200, tick: 100, probe: 300, light: 200, reply: 300, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
-function lampAdd(x) { lampLog.push(x); const k = x.lamp, q = LAMP_QUOTA[k] || 40; let n = 0; for (const y of lampLog) if (y.lamp === k) n++; if (n > q) lampLog.splice(lampLog.findIndex(y => y.lamp === k), 1); }   // 按类别配额，各类满了丢本类最旧，保留新到样本
+const LAMP_QUOTA = { bell: 200, 'win:active': 150, win: 200, awake: 200, tick: 100, probe: 300, light: 200, reply: 300, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
+const lampKey = y => y.lamp === 'win' && (y.ev === 'active' || y.ev === 'order') ? 'win:active' : y.lamp;   // v2（S5）：切号/排序单独一桶，不被 focus/blur 挤掉
+function lampAdd(x) { lampLog.push(x); const k = lampKey(x), q = LAMP_QUOTA[k] || 40; let n = 0; for (const y of lampLog) if (lampKey(y) === k) n++; if (n > q) lampLog.splice(lampLog.findIndex(y => lampKey(y) === k), 1); }   // 按类别配额，各类满了丢本类最旧，保留新到样本
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
     if (lampSeen.has(sig) || lampSeen.size >= 40) continue; lampSeen.add(sig); lampAdd({ t: Date.now(), lamp: 'dom', verdict: x.verdict, prefix: x.prefix, chain: x.chain }); }
@@ -426,9 +539,48 @@ function workProbe(wc) {
 // u：最后一个气泡是否用户本人发的（布尔；判不出就不带）。不含正文，属性原值只在页面里映射，不出页面。
 // us：u 由哪路判出（整数）1 author-role 属性 2 data-bubble-kind/data-entry-kind 的值 3 用户发送动画属性 data-flight-* 4 message-text 相对 message-list 左右位置
 // bk：data-bubble-kind / data-entry-kind 值落在固定词表哪一类（整数）0 无此属性 1 用户类 2 回复类 9 有但不在词表——供真机核对，不写原值
-const replyJs = `(() => { const b = document.querySelectorAll('[data-testid="message-bubble"]'); const l = b[b.length - 1]; let u, us, bk = 0; if (l) { const UW = /^(user|human|self|me|mine|own|outgoing|outbound|sent|local|question|prompt|request)([-_ ].*)?$/i, AW = /^(assistant|agent|bot|ai|model|hark|system|reply|response|answer|incoming|inbound|remote|narration|run)([-_ ].*)?$/i; const row = l.closest('[data-entry-kind]'), kv = [l.getAttribute('data-bubble-kind'), row && row.getAttribute('data-entry-kind')].filter(v => v != null && v !== ''); for (const v of kv) { if (UW.test(v)) { bk = 1; break; } if (AW.test(v)) { bk = 2; break; } bk = 9; } const r = l.closest('[data-message-author-role]') || l.querySelector('[data-message-author-role]'); if (r) { u = r.getAttribute('data-message-author-role') === 'user'; us = 1; } else if (bk === 1 || bk === 2) { u = bk === 1; us = 2; } else if (l.matches('[data-flight-text],[data-flight-mask],[data-flight-holder]') || l.querySelector('[data-flight-text],[data-flight-mask],[data-flight-holder]')) { u = true; us = 3; } else { const t = l.querySelector('[data-testid="message-text"]') || l, c = l.closest('[data-testid="message-list"]') || l.closest('[role="log"],[role="feed"]'); if (c) { const lr = t.getBoundingClientRect(), cr = c.getBoundingClientRect(); if (lr.width > 0 && cr.width > 0 && lr.width < cr.width * 0.9) { const ml = lr.left - cr.left, mr = cr.right - lr.right; if (ml > mr + 24) { u = true; us = 4; } else if (mr > ml + 24) { u = false; us = 4; } } } } } return { n: b.length, len: l ? String(l.innerText || '').length : 0, u, us, bk }; })()`;
+const replyJs = `(() => { const b = document.querySelectorAll('[data-testid="message-bubble"]'); const l = b[b.length - 1]; let u, us, bk = 0; if (l) { const UW = /^(user|human|self|me|mine|own|outgoing|outbound|sent|local|question|prompt|request)([-_ ].*)?$/i, AW = /^(assistant|agent|bot|ai|model|hark|system|reply|response|answer|incoming|inbound|remote|narration|run)([-_ ].*)?$/i; const row = l.closest('[data-entry-kind]'), kv = [l.getAttribute('data-bubble-kind'), row && row.getAttribute('data-entry-kind')].filter(v => v != null && v !== ''); for (const v of kv) { if (UW.test(v)) { bk = 1; break; } if (AW.test(v)) { bk = 2; break; } bk = 9; } const r = l.closest('[data-message-author-role]') || l.querySelector('[data-message-author-role]'); if (r) { u = r.getAttribute('data-message-author-role') === 'user'; us = 1; } else if (bk === 1 || bk === 2) { u = bk === 1; us = 2; } else if (l.matches('[data-flight-text],[data-flight-mask],[data-flight-holder]') || l.querySelector('[data-flight-text],[data-flight-mask],[data-flight-holder]')) { u = true; us = 3; } else { const t = l.querySelector('[data-testid="message-text"]') || l, c = l.closest('[data-testid="message-list"]') || l.closest('[role="log"],[role="feed"]'); if (c) { const lr = t.getBoundingClientRect(), cr = c.getBoundingClientRect(); if (lr.width > 0 && cr.width > 0 && lr.width < cr.width * 0.9) { const ml = lr.left - cr.left, mr = cr.right - lr.right; if (ml > mr + 24) { u = true; us = 4; } else if (mr > ml + 24) { u = false; us = 4; } } } } } return { n: b.length, len: l ? String(l.innerText || '').length : 0, u, us, bk, url: String(location.href).split('#')[0], pid: (performance && performance.timeOrigin) || 0 }; })()`;   // url / pid 只给补亮对基线用，不进诊断
 const REPLY_STABLE_MS = 5000;
 const replyLast = new Map();   // key -> { sig, at, state }
+// 1.3.39 #18 兜底：连锁存都没看见（页面根本没渲染停止按钮 / pill 的极短回复）时，用独立的回复探针补亮一下：
+// 同一页面里出现了一条新的回复气泡（条数超过本页见过的最高值、最后一条判为非本人、且最后一条字数变了或上一条是本人发的），而 15 秒内灯没亮过，就闪亮 4 秒。
+// 防误亮：URL 变了 / 首次观察 / 换页后 4 秒内（历史分批渲染）只更新基线；条数没超过本页高水位（上翻再滚回底、虚拟列表重挂载）不算；一次增 >3 条不算。
+// v2（ZUJH M2/M3/S1）：高水位 hiN；URL 取回复探针在页面里读的 location（与结果同源），主进程读的 URL 只作对照，不一致就只重置基线；
+// 补亮只用于显示（flashUntil，v3 起闪 4 秒，tick 最长约 2.5s 也至少看得到一次），不改 working / isWorking，门铃和防挂起不受影响。
+const REPLY_SETTLE_MS = 4000, REPLY_DUP_MS = 15000, REPLY_FLASH_MS = 4000;
+function replyLight(prev, cur, now) {
+  if (!prev || !cur || prev.url !== cur.url || now - prev.base < REPLY_SETTLE_MS) return false;
+  if (cur.u !== false || !(cur.n > prev.n) || cur.n - prev.n > 3) return false;
+  if (typeof prev.hiN === 'number' && !(cur.n > prev.hiN)) return false;   // M2：回到见过的条数（上翻再滚回底）不算新回复
+  return cur.len !== prev.len || prev.u === true;
+}
+const replySeen = new Map();   // key -> { url, pid, base, rs, armed, hiN, n, len, u }：补亮用的基线（不含正文，只有条数/字数/布尔；url、pid 只在内存里对基线）
+// v3（ZUJH N1）：基线“重置”= 首次观察、URL 变、页面加载标识 pid（performance.timeOrigin）变；结果不带 pid 时，条数一次掉 >3 也按重载算。
+//   重置后 settle 4 秒内 hiN 跟当前条数走（不取最大），过了 settle 才累加；
+//   重置后先“上膛”才可补亮：看到本人发出的气泡（u=true），或距重置满 30 秒。重载 / 换会话后历史分批渲染（全是旧回复）不会被当成新回复。
+const REPLY_ARM_MS = 30000;
+// v6（ZUJH X1）回复补亮去重：灯亮着、或 15 秒内被探针点过 / 闪过，都不再补亮（只用于启发式回复补亮）
+// v7（CZRA 2a4efdc8 裁定）latch 不用 15s 窗口：锁存读走即清、同一次出现只命中一次。latch 只在灯亮着、正在闪、或 6 秒内刚有回复补亮（同一条回复）时不再闪；
+//   第二次真实短回复（哪怕相隔 10s，或探针亮灯后 12s）照样亮
+const LATCH_AFTER_REPLY_MS = 6000;
+function flashDup(w, now) { return !!(w.working || (w.busyAt && now - w.busyAt < REPLY_DUP_MS) || (w.flashAt && now - w.flashAt < REPLY_DUP_MS)); }
+function replyBackfill(acc, key, mainUrl, v, now) {
+  if (!v || !acc) return false;
+  const prev = replySeen.get(key), url = typeof v.url === 'string' ? v.url : '', pid = typeof v.pid === 'number' && v.pid > 0 ? v.pid : 0;
+  const fresh = () => ({ url, pid, base: now, rs: now, armed: v.u === true, hiN: v.n, n: v.n, len: v.len, u: v.u });
+  if (!url || (mainUrl && mainUrl !== url)) { if (url) replySeen.set(key, fresh()); else replySeen.delete(key); return false; }   // M3：不同源只重置基线
+  const reset = !prev || prev.url !== url || (pid && prev.pid && pid !== prev.pid) || (!pid && typeof prev.n === 'number' && prev.n - v.n > 3);
+  if (reset) { replySeen.set(key, fresh()); return false; }
+  const settling = now - prev.base < REPLY_SETTLE_MS, hi = typeof prev.hiN === 'number' ? prev.hiN : -1;
+  const cur = { url, pid: pid || prev.pid || 0, base: prev.base, rs: prev.rs || 0, armed: prev.armed !== false || v.u === true, hiN: settling ? v.n : Math.max(hi, v.n), n: v.n, len: v.len, u: v.u };
+  replySeen.set(key, cur);
+  const armed = prev.armed !== false || now - (prev.rs || 0) >= REPLY_ARM_MS;
+  if (!armed || !replyLight(prev, cur, now)) return false;
+  const w = workOf(acc.id);
+  if (flashDup(w, now)) return false;   // 灯亮着或 15 秒内亮过：不重复
+  w.flashAt = now; w.flashUntil = now + REPLY_FLASH_MS; w.flashVia = 'reply'; return true;   // 下一轮 workTick 按 flashUntil 亮灯（只显示）
+}
+const lampShown = id => isWorking(id) || (!!loginState[id] && !!work[id] && work[id].flashUntil > Date.now());   // 侧栏灯 = 真在忙 或 补亮闪烁中
 function replyProbe(wc) {
   if (!wc || wc.isDestroyed() || wc.isLoading()) return Promise.resolve(null);
   return Promise.race([wc.executeJavaScript(replyJs, false).then(v => v && typeof v.n === 'number' ? v : null, () => null), new Promise(r => setTimeout(() => r(null), 1500))]);
@@ -451,20 +603,28 @@ async function workTick() {
     let changed = false; const lights = [];
     await Promise.all(accounts.map(async a => {
       const w = workOf(a.id);
-      if (!loginState[a.id]) { if (w.working) { w.working = false; changed = true; } return; }
+      if (!loginState[a.id]) { if (w.working || w.lit) { w.working = false; w.lit = false; changed = true; } return; }
       const vs = [views.get(a.id), inboxViews.get(a.id)], ai = accounts.indexOf(a);
       // 回复完成诊断：不 await、不参与点灯，结果回来时按回来的时刻记录，绝不拖慢灯
       vs.forEach((v, k) => { const key = a.id + ':' + k; if (replyPending.has(key)) return; replyPending.add(key);
-        replyProbe(v?.webContents).then(r => replyDiag(key, ai, k ? 'inbox' : 'main', r, Date.now()), () => {}).finally(() => replyPending.delete(key)); });
+        const url = (() => { try { return v && !v.webContents.isDestroyed() ? v.webContents.getURL().split('#')[0] : ''; } catch { return ''; } })();
+        replyProbe(v?.webContents).then(r => { const t = Date.now(); replyDiag(key, ai, k ? 'inbox' : 'main', r, t); if (r) replyBackfill(a, key, url, r, t); }, () => {}).finally(() => replyPending.delete(key)); });
       const ts = Date.now(), hits = await Promise.all(vs.map(v => workProbe(v?.webContents)));
       const tp = Date.now(); if (tp - ts > tickStat.maxProbeMs) tickStat.maxProbeMs = tp - ts;
       // 运行周期诊断：每个窗口的主视图 / 收信视图，探针结果（命中规则或空闲）变化时记一条；灯亮灭变化时记一条。只记序号、规则名、时间，不含正文
       hits.forEach((h, k) => { const key = a.id + ':' + k, val = h || ''; if (lampProbeLast.get(key) !== val) { lampProbeLast.set(key, val); lampAdd({ t: tp, lamp: 'probe', acc: ai, view: k ? 'inbox' : 'main', busy: !!h, rule: h || undefined, ms: tp - ts }); } });
-      if (hits.some(Boolean)) w.busyAt = tp;
+      // v5（CZRA 返修 2）：只有原探针命中才写 busyAt（进 working / isWorking / awakeNeed，影响门铃投递时机）；
+      //   原探针没命中、只有锁存命中（latch:*）时同补亮：只设 flashAt / flashUntil 闪 4 秒，light 记 via=latch，投递时机与 1.3.38 一致
+      const hit = hits.find(h => h && !/^latch:/.test(h)), lhit = hits.find(h => h && /^latch:/.test(h));
+      if (hit) { w.busyAt = tp; w.via = 'probe'; }
+      else if (lhit && !w.working && !(w.flashUntil > tp) && !(w.flashVia === 'reply' && tp - w.flashAt < LATCH_AFTER_REPLY_MS)) { w.flashAt = tp; w.flashUntil = tp + REPLY_FLASH_MS; w.flashVia = 'latch'; }
       const on = !!w.busyAt && tp - w.busyAt < WORK_IDLE_MS;
-      if (on !== w.working) { w.working = on; changed = true; lights.push({ acc: ai, on }); }
+      if (on !== w.working) { w.working = on; changed = true; }
+      const lit = on || w.flashUntil > tp;   // 灯 = 真在忙 或 补亮闪烁（补亮不改 working）
+      if (lit !== !!w.lit) { w.lit = lit; changed = true; lights.push(lit ? { acc: ai, on: true, via: on ? (w.via || 'probe') : (w.flashVia || 'reply') } : { acc: ai, on: false }); }
     }));
     for (const id of Object.keys(work)) if (!accounts.some(a => a.id === id)) delete work[id];
+    for (const key of replySeen.keys()) if (!accounts.some(a => key.startsWith(a.id + ':'))) replySeen.delete(key);
     if (changed) { pushState(); const t = Date.now(); lights.forEach(x => lampAdd({ t, lamp: 'light', ...x })); }   // light 记录取灯实际推送的时刻
   } finally { workTicking = false; }
 }
@@ -1054,6 +1214,35 @@ function bellWait(accId) {
   if (q.some(x => x.agentBusySince && now - x.agentBusySince >= AGENT_BUSY_HINT_MS)) return '窗口一直在忙，门铃在等';
   return '';
 }
+// 1.3.39：门铃投递诊断 lamp=bell {ev, acc, id:信id全文, tries, waitMs[, merged]}。ev ∈ agent-busy | busy | sent | no-composer；
+// tries = 这封信（含被它顶替的旧门铃）第几次投递尝试（内存计数，重启清零）；waitMs = 距第一次判忙的毫秒数，没判过忙为 0。
+// 防刷屏：同一封信同一状态连续重试，只记第一条，之后每分钟最多 1 条；状态一变立刻记。
+// v2（ZUJH M4）：首次见到一封信时，继承所有（含多级）mergedInto 指向它的旧门铃的计数：tries 求和、首次判忙取最早，并删掉旧条目；记 merged=继承条数。
+//   首次判忙再兜底取 min(agentBusySince, busySince)（合并时已接着算）。
+// v2（S3）：只有 sent 清计数；no-composer 保留，手动重投后接着数；10 分钟没动静的条目清掉。
+// v4（S4，CZRA 裁定）：id 记 L.id 全文不截断（≤18 字符，可与 mail.letters 直接对上）。
+const BELL_LOG_GAP_MS = 60 * 1000, BELL_KEEP_MS = 10 * 60 * 1000;
+const bellLog = new Map();   // 信 id -> { tries, firstBusy, ev, logAt（上次记录）, lastAt（上次尝试）, merged }
+function bellInherit(L, s) {
+  const olds = [], seen = new Set([String(L.id)]); let frontier = [String(L.id)];
+  for (let d = 0; d < 20 && frontier.length; d++) { const next = []; for (const x of (mail.letters || [])) if (x && x.mergedInto && frontier.includes(String(x.mergedInto)) && !seen.has(String(x.id))) { seen.add(String(x.id)); olds.push(String(x.id)); next.push(String(x.id)); } frontier = next; }
+  for (const k of olds) { const o = bellLog.get(k); if (!o) continue; s.tries += o.tries; s.merged = (s.merged || 0) + 1 + (o.merged || 0); if (o.firstBusy && (!s.firstBusy || o.firstBusy < s.firstBusy)) s.firstBusy = o.firstBusy; bellLog.delete(k); }
+}
+function bellDiag(L, acc, ev, now = Date.now()) {
+  if (!L || !L.id) return false;
+  for (const [k, o] of bellLog) if (now - o.lastAt > BELL_KEEP_MS && o.lastAt) bellLog.delete(k);
+  const k = String(L.id); let s = bellLog.get(k);
+  if (!s) { s = { tries: 0, firstBusy: 0, ev: '', logAt: 0, lastAt: 0 }; bellInherit(L, s); }
+  const since = [L.agentBusySince, L.busySince].filter(x => typeof x === 'number' && x > 0); if (since.length) { const m = Math.min(...since); if (!s.firstBusy || m < s.firstBusy) s.firstBusy = m; }
+  s.tries++;
+  if ((ev === 'agent-busy' || ev === 'busy') && !s.firstBusy) s.firstBusy = now;
+  const log = ev !== s.ev || now - s.logAt >= BELL_LOG_GAP_MS;
+  if (log) { const x = { t: now, lamp: 'bell', ev, acc: accounts.indexOf(acc), id: k, tries: s.tries, waitMs: s.firstBusy ? now - s.firstBusy : 0 }; if (s.merged) x.merged = s.merged; lampAdd(x); s.ev = ev; s.logAt = now; }
+  s.lastAt = now;
+  bellLog.delete(k); if (ev !== 'sent') bellLog.set(k, s);   // 删了再插：Map 顺序即最近活动顺序
+  if (bellLog.size > 500) bellLog.delete(bellLog.keys().next().value);
+  return log;
+}
 async function deliverQueue() {
   if (delivering) return; delivering = true;
   try {
@@ -1093,6 +1282,7 @@ async function deliverQueue() {
         }
         if (r === 'no-composer') await new Promise(res => setTimeout(res, 2500));
       }
+      if (L.status !== 'merged' && (r === 'agent-busy' || r === 'busy' || r === 'sent' || r === 'no-composer')) bellDiag(L, acc, r);   // 1.3.39：门铃诊断（已被顶替的不记）
       if (r === 'agent-busy') {
         delete L.busySince; if (!L.agentBusySince) L.agentBusySince = Date.now();
         L.note = '收件窗口正在干活，忙完自动送达'; L.retryAt = Date.now() + AGENT_BUSY_RETRY_MS;
@@ -1178,7 +1368,7 @@ function protocolText(acc) {
   return `【Hark Tools 信箱说明，请记住】我同时开着几个 Hark 窗口，每个窗口有唯一的信箱地址，你是 Hark，地址是 ${mailAddr(acc)}。通讯录：\n${directory(acc)}\n\n当我让你去和另一个窗口讨论，或你需要别的窗口配合时，用写信的方式联系它：把信放进一个代码块发出，格式如下——\n\n[[MAIL to=对方的信箱地址，例如 #ABCD]]\n主题: 一句话主题\n${PLACEHOLDER}（文字、方案、代码都可以直接写在这里）\n[[/MAIL]]\n\nHark Tools 会自动把信送到对方窗口，对方也会用同样的格式回信给你。一封信一个代码块；正文里如果要放代码，直接写，不要再嵌套代码块。内容很长（大段代码、整个文件、多个文件）时，别塞进正文：把它存成文件（txt、md、源码文件、zip 压缩包等任意格式都行），作为附件放在写信的同一条回复里，并在信里加一行「附件: 文件名1, 文件名2」，Hark Tools 会把文件一起送过去。收件人写信箱地址（窗口改名或调顺序时地址不变），也可以写窗口名；不支持按编号寻址。你的身份由 Hark Tools 按发信窗口自动标注，不用自己署名。新窗口加入时，你收到的来信末尾会附最新通讯录。讨论出结论后，你来告诉我结果。收到这条只需回复「好的」，不用写信。`;
 }
 ipcMain.handle('mailPause', (_e, on) => { mail.paused = !!on; if (!on) mail.letters.filter(x => x.status === 'held').forEach(x => { x.status = 'queued'; x.note = ''; }); mailSave(); pushState(); deliverQueue(); });
-ipcMain.handle('mailRetry', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.to) { L.status = 'queued'; L.note = ''; L.at = Date.now(); delete L.retryAt; delete L.busyTries; delete L.filesUp; mailSave(); pushState(); deliverQueue(); } });
+ipcMain.handle('mailRetry', (_e, id) => { const L = mail.letters.find(x => x.id === id); if (L && L.to) { L.status = 'queued'; L.note = ''; L.at = Date.now(); delete L.awakeAt; delete L.retryAt; delete L.busyTries; delete L.filesUp; mailSave(); pushState(); deliverQueue(); } });
 ipcMain.handle('mailClear', () => { mail.letters = mail.letters.filter(x => x.status === 'queued'); mailSave(); pushState(); });
 // 发说明（TSMS 裁定）：
 // - 带 id（侧栏右键「发说明」）：只发这一个窗口，并撤销它的「已注册」推断（siteReg/reteachKey/teachFail），重新给 30 分钟宽限期——这是唯一会清这些状态的路径
@@ -1992,7 +2182,7 @@ function siteFlushAcc(accId) {
   // M5：同一窗口同时只投一封门铃——还没投出去的旧门铃作废，它的信并进这封（旧的在前，按内嵌总量重新分配全文）
   const bellId = 'b' + now.toString(36) + Math.random().toString(36).slice(2, 6) + accId.slice(-3);
   const slim = m => ({ id: m.id, seq: m.seq, from: m.from, title: m.title, bytes: m.bytes });
-  let items = still.map(x => ({ msg: slim(x.msg), text: x.text, epoch: x.epoch })), extIds = extE.map(e => e.msg.id), drop = dropped, busySince, agentBusySince;
+  let items = still.map(x => ({ msg: slim(x.msg), text: x.text, epoch: x.epoch })), extIds = extE.map(e => e.msg.id), drop = dropped, busySince, agentBusySince, awakeAt;
   const olds = mail.letters.filter(x => x.site && x.to === accId && x.status === 'queued' && Array.isArray(x.bellItems) && !x.filesUp && !inflight.has(x.id));   // F1：正在投的不动
   if (olds.length) {
     const seen = new Set(), seenX = new Set();
@@ -2004,6 +2194,7 @@ function siteFlushAcc(accId) {
     items = items.slice().reverse().map(x => { if (x.text == null) return x; if (x.text.length <= left) { left -= x.text.length; return x; } return { ...x, text: null }; }).reverse();
     const bs = olds.map(o => o.busySince).filter(Boolean); if (bs.length) busySince = Math.min(...bs);   // 草稿等待时长接着算
     const ab = olds.map(o => o.agentBusySince).filter(Boolean); if (ab.length) agentBusySince = Math.min(...ab);   // S7：一直忙的时长也接着算
+    awakeAt = Math.min(...olds.map(o => o.awakeAt || o.at || now));   // v12 P2-L：防挂起的入队 2h 从被并旧信最早那封算
   }
   const raw = items.length || extIds.length ? siteBellText(a, items, drop, extIds) : null;
   // S5：新门铃生成成功后才让旧的作废
@@ -2011,7 +2202,7 @@ function siteFlushAcc(accId) {
   if (raw == null) { mailSave(); pushState(); return; }
   const exOnly = !items.length;
   const ms = items.length ? items.map(x => x.msg) : extIds.map(id => ({ id, title: '未登记地址来信' }));
-  mail.letters.push({ id: bellId, at: now, from: null, fromName: exOnly ? `${ms.length} 封未登记地址来信` : ms.length === 1 ? cleanAddr(ms[0].from) : `${ms.length} 封网站来信`, to: accId, toName: a.name, subject: exOnly ? '未登记地址来信（未内嵌）' : ms.length === 1 ? (cleanLine(ms[0].title, 60) || '网站来信') : ms.map(m => cleanLine(m.title, 30) || cleanAddr(m.from)).join('；').slice(0, 60), body: raw, raw, status: 'queued', note: '', site: true, bookHash: siteBellText.lastBookHash, bellItems: items, bellExt: extIds, bellDropped: drop, ...(busySince ? { busySince } : {}), ...(agentBusySince ? { agentBusySince } : {}) });
+  mail.letters.push({ id: bellId, at: now, ...(awakeAt ? { awakeAt } : {}), from: null, fromName: exOnly ? `${ms.length} 封未登记地址来信` : ms.length === 1 ? cleanAddr(ms[0].from) : `${ms.length} 封网站来信`, to: accId, toName: a.name, subject: exOnly ? '未登记地址来信（未内嵌）' : ms.length === 1 ? (cleanLine(ms[0].title, 60) || '网站来信') : ms.map(m => cleanLine(m.title, 30) || cleanAddr(m.from)).join('；').slice(0, 60), body: raw, raw, status: 'queued', note: '', site: true, bookHash: siteBellText.lastBookHash, bellItems: items, bellExt: extIds, bellDropped: drop, ...(busySince ? { busySince } : {}), ...(agentBusySince ? { agentBusySince } : {}) });
   mailSave(); pushState(); deliverQueue();   // 出队、登记、入 letters 同一次保存
 }
 
@@ -2114,3 +2305,4 @@ async function sitePoll() {
 // P1-4：没有 retryAt 的待投信也要补投——合并出的新门铃入队时若投递循环正忙（本轮已选好要投的信），最迟 15 秒后由这里接上
 app.whenReady().then(() => { setInterval(() => { if (mail.letters.some(x => x.status === 'queued')) { deliverQueue().catch(() => {}); pushState(); } }, 15000); });
 app.whenReady().then(() => { setTimeout(() => sitePoll().catch(() => {}), 4000); setInterval(() => { sitePoll().catch(() => {}); }, 5000); setInterval(() => { siteFlush().catch(() => {}); }, 1000); });
+
