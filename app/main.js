@@ -1,5 +1,14 @@
 // Hark Cockpit: 每个 Hark 账号一个独立的持久化会话（cookie/登录态互不干扰），侧栏一键切换。
-const { app, BaseWindow, WebContentsView, ipcMain, session, shell, Menu } = require('electron');
+const { app, BaseWindow, WebContentsView, ipcMain, session, shell, Menu, powerSaveBlocker } = require('electron');
+// 1.3.38：Tools 被全屏游戏等盖住、或最小化时，Chromium 会把整个窗口当成「看不见」——页面降频、冻结，Hark 页面也会暂停刷新，
+//         侧栏的「在忙」灯停在亮着，门铃一直排队不投，所有窗口就像停工。这里关掉遮挡检测和后台降频（必须在 app ready 前设）。
+try {
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+  const prevOff = app.commandLine.getSwitchValue('disable-features');
+  app.commandLine.appendSwitch('disable-features', [prevOff, 'CalculateNativeWinOcclusion', 'IntensiveWakeUpThrottling', 'UseEcoQoSForBackgroundProcess'].filter(Boolean).join(','));
+} catch {}
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -69,6 +78,52 @@ function hookKeys(wc) {
   });
 }
 
+// 1.3.38：让每个 Hark 页面始终以为自己「在前台、有焦点」——页面不会因为切到别的程序就暂停刷新 / 冻结
+const AWAKE_JS = `(() => { if (window.__harkAwake) return true; window.__harkAwake = 1;
+  try {
+    const D = Document.prototype, def = (k, v) => { try { Object.defineProperty(D, k, { configurable: true, get: () => v }); } catch {} };
+    def('hidden', false); def('webkitHidden', false); def('visibilityState', 'visible'); def('webkitVisibilityState', 'visible');
+    try { D.hasFocus = function () { return true; }; } catch {}
+    const stop = e => { if (e.target === document || e.target === window) e.stopImmediatePropagation(); };
+    for (const t of ['visibilitychange', 'webkitvisibilitychange', 'freeze']) window.addEventListener(t, stop, true);
+  } catch {}
+  return true; })()`;
+function keepAwake(wc) {
+  if (!wc || wc.isDestroyed()) return Promise.resolve();
+  try { wc.setBackgroundThrottling(false); } catch {}
+  const run = () => { if (!wc.isDestroyed()) wc.executeJavaScript(AWAKE_JS, true).catch(() => {}); };
+  wc.on('dom-ready', run);
+  // P2-8：窗口失焦不再靠拦 blur 事件（依赖注册顺序），一律以 CDP 焦点模拟为准；注入脚本注册完成后才加载页面
+  const cdp = async () => {
+    try { if (!wc.debugger.isAttached()) wc.debugger.attach('1.3'); } catch { return; }
+    const d = wc.debugger;
+    await Promise.allSettled([
+      d.sendCommand('Page.enable').then(() => d.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: AWAKE_JS })),
+      d.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }),
+      d.sendCommand('Page.setWebLifecycleState', { state: 'active' }),
+    ]);
+  };
+  // 万一页面已被系统冻结：每分钟把它叫醒一次（active 是幂等的）
+  const t = setInterval(() => { if (wc.isDestroyed()) return clearInterval(t); try { if (wc.debugger.isAttached()) wc.debugger.sendCommand('Page.setWebLifecycleState', { state: 'active' }).catch(() => {}); } catch {} }, 60 * 1000);
+  // 注入与焦点模拟注册完成（最多等 1.5 秒）后再返回，调用方据此 loadURL；无论成败都返回 promise
+  return Promise.race([cdp(), new Promise(r => setTimeout(r, 1500))]).catch(() => {}).then(run);
+}
+// P2-13：只在有门铃排队或有窗口在干活时防挂起，空闲时放开，电脑照常睡眠
+let awakeBlock = null, awakeSince = 0, awakeCapped = false;
+const AWAKE_MAX_MS = 2 * 60 * 60 * 1000;   // P3：连续防挂起最多 2 小时（在忙灯卡亮时也让电脑能睡），条件消失后才重新计
+function awakeNeed() { try { return mail.letters.some(x => x.status === 'queued') || accounts.some(a => isWorking(a.id)); } catch { return false; } }
+function awakeTick() {
+  let need = awakeNeed();
+  if (!need) awakeCapped = false;
+  else if (awakeBlock != null && Date.now() - awakeSince > AWAKE_MAX_MS) { awakeCapped = true; lampAdd({ t: Date.now(), lamp: 'awake', capped: true }); }
+  if (awakeCapped) need = false;
+  try {
+    if (need && (awakeBlock == null || !powerSaveBlocker.isStarted(awakeBlock))) { awakeBlock = powerSaveBlocker.start('prevent-app-suspension'); awakeSince = Date.now(); lampAdd({ t: Date.now(), lamp: 'awake', on: true }); }
+    else if (!need && awakeBlock != null) { if (powerSaveBlocker.isStarted(awakeBlock)) powerSaveBlocker.stop(awakeBlock); awakeBlock = null; lampAdd({ t: Date.now(), lamp: 'awake', on: false }); }
+  } catch {}
+}
+app.whenReady().then(() => setInterval(awakeTick, 15000));
+
 function partitionOf(id) { return `persist:hark-${id}`; }
 
 function getView(acc) {
@@ -95,7 +150,7 @@ function getView(acc) {
   v.webContents.on('did-navigate-in-page', () => pushState());
   watchUsage(acc, v.webContents);
   hookDownloads(acc, v.webContents);
-  v.webContents.loadURL(acc.url || urlForKind(acc.kind));
+  keepAwake(v.webContents).then(() => { if (!v.webContents.isDestroyed()) v.webContents.loadURL(acc.url || urlForKind(acc.kind)); });
   views.set(acc.id, v);
   return v;
 }
@@ -114,7 +169,7 @@ function inboxView(acc) {
   { const [w, h] = win.getContentSize(); v2.setBounds({ x: SIDEBAR_W, y: TOOLBAR_H, width: Math.max(0, w - SIDEBAR_W), height: Math.max(0, h - TOOLBAR_H) }); }
   v2.webContents.setUserAgent(UA);
   v2.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  v2.webContents.loadURL(acc.inboxUrl);
+  keepAwake(v2.webContents).then(() => { if (!v2.webContents.isDestroyed()) v2.webContents.loadURL(acc.inboxUrl); });
   inboxViews.set(acc.id, v2);
   return v2;
 }
@@ -247,6 +302,7 @@ app.whenReady().then(() => {
   load();
   Menu.setApplicationMenu(null);
   win = new BaseWindow({ width: 1360, height: 880, minWidth: 900, minHeight: 600, title: 'Hark Tools', backgroundColor: '#222A31', titleBarStyle: 'hidden', titleBarOverlay: { color: '#222A31', symbolColor: '#ECE6DB', height: 51 } });
+  for (const ev of ['minimize', 'restore', 'blur', 'focus', 'hide', 'show']) win.on(ev, () => { try { lampAdd({ t: Date.now(), lamp: 'win', ev }); } catch {} });   // 1.3.38：遮挡/最小化期间的诊断对照
   sidebar = new WebContentsView({ webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true } });
   win.contentView.addChildView(sidebar);
   sidebar.webContents.loadFile(path.join(__dirname, 'sidebar.html'));
@@ -356,7 +412,7 @@ const stopJs = () => `(() => { ${PICK_COMPOSER}
 const lampSeen = new Set();
 const lampLog = [];   // 状态灯诊断单独存，最多 300 条，不被额度诊断挤掉
 const lampProbeLast = new Map();
-const LAMP_QUOTA = { tick: 100, probe: 300, light: 200, reply: 300, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
+const LAMP_QUOTA = { win: 200, awake: 200, tick: 100, probe: 300, light: 200, reply: 300, dom: 60, 'near-text': 60, stream: 40, 'stream-end': 40, sse: 100, ws: 20, 'ws-frame': 100, 'long-req': 60 };
 function lampAdd(x) { lampLog.push(x); const k = x.lamp, q = LAMP_QUOTA[k] || 40; let n = 0; for (const y of lampLog) if (y.lamp === k) n++; if (n > q) lampLog.splice(lampLog.findIndex(y => y.lamp === k), 1); }   // 按类别配额，各类满了丢本类最旧，保留新到样本
 function lampDiag(seen) {
   for (const x of seen || []) { const sig = x.verdict + '|' + x.chain.map(c => c.tag + '.' + (c.role || '') + '.' + (c.cls || '')).join('>');
